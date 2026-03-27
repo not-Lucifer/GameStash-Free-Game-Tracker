@@ -1,0 +1,36 @@
+# CMake
+build/
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# vcpkg
+vcpkg/
+vcpkg_installed/
+
+# VS Code / Visual Studio
+.vscode/
+.vs/
+out/
+
+# Compiled objects and binaries
+*.exe
+*.dll
+*.lib
+*.obj
+*.pdb
+*.ilk
+*.exp
+
+# Logs and temporary files
+*.log
+run_out.txt
+vs_path.txt
+*.swp
