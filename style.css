@@ -1,0 +1,344 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+body {
+    background-color: #121212;
+    color: #ffffff;
+    overflow: hidden; /* App-like feel */
+}
+
+/* Base Layout */
+.app-container {
+    display: flex;
+    height: 100vh;
+    width: 100vw;
+}
+
+/* Sidebar Styling */
+.sidebar {
+    width: 240px;
+    background-color: #1a1a1d;
+    display: flex;
+    flex-direction: column;
+    padding-top: 25px;
+    border-right: 1px solid #282828;
+}
+
+.logo {
+    padding: 0 20px;
+    margin-bottom: 40px;
+}
+
+.logo h2 {
+    font-weight: 800;
+    font-size: 24px;
+    letter-spacing: 1px;
+}
+
+.highlight {
+    color: #00d8ff;
+}
+
+.nav-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 0 10px;
+}
+
+.nav-item {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 12px 20px;
+    text-decoration: none;
+    color: #a0a0a0;
+    font-weight: 600;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+}
+
+.nav-item:hover {
+    color: #ffffff;
+    background-color: rgba(255,255,255,0.05);
+}
+
+.nav-item.active {
+    color: #ffffff;
+    background-color: rgba(0, 216, 255, 0.15);
+    border-left: 4px solid #00d8ff;
+}
+
+/* Main Content Area */
+.main-content {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    background-color: #121212;
+    overflow-y: auto;
+    position: relative;
+}
+
+.top-bar {
+    height: 70px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 40px;
+    background-color: rgba(18, 18, 18, 0.95);
+    backdrop-filter: blur(10px);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.search-bar {
+    display: flex;
+    align-items: center;
+    background-color: #1a1a1d;
+    border-radius: 20px;
+    padding: 8px 15px;
+    width: 300px;
+    border: 1px solid #282828;
+}
+
+.search-bar svg {
+    color: #888;
+    margin-right: 10px;
+}
+
+.search-bar input {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: white;
+    width: 100%;
+    font-size: 14px;
+}
+
+.search-bar input::placeholder {
+    color: #888;
+}
+
+.hero-section {
+    padding: 40px;
+    background: linear-gradient(135deg, rgba(0, 216, 255, 0.1) 0%, rgba(18, 18, 18, 0) 100%);
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.hero-section h1 {
+    font-size: 42px;
+    font-weight: 800;
+    margin-bottom: 10px;
+}
+
+.hero-section span {
+    color: #00d8ff;
+}
+
+.hero-section p {
+    color: #a0a0a0;
+    font-size: 16px;
+}
+
+/* Grid System */
+.games-grid {
+    padding: 40px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 30px;
+}
+
+/* Card Styling */
+.game-card {
+    background-color: #1e1e24;
+    border-radius: 12px;
+    overflow: hidden;
+    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease;
+    border: 1px solid #2a2a30;
+    display: flex;
+    flex-direction: column;
+}
+
+.game-card:hover {
+    transform: translateY(-8px);
+    box-shadow: 0 15px 30px rgba(0,0,0,0.5), 0 0 15px rgba(0, 216, 255, 0.2);
+    border-color: #3a3a40;
+}
+
+.game-image {
+    height: 160px;
+    background-size: cover;
+    background-position: center;
+    position: relative;
+}
+
+.platform-badge {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background-color: rgba(0,0,0,0.7);
+    backdrop-filter: blur(4px);
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border: 1px solid rgba(255,255,255,0.1);
+}
+
+.game-info {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+}
+
+.game-info h3 {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    flex-grow: 1;
+}
+
+.price-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.price-strikethrough {
+    color: #888;
+    text-decoration: line-through;
+    font-size: 14px;
+}
+
+.price-free {
+    background-color: #00d8ff;
+    color: #000;
+    font-weight: 800;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.claim-btn {
+    width: 100%;
+    padding: 12px;
+    border: none;
+    border-radius: 6px;
+    background-color: rgba(255,255,255,0.1);
+    color: white;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.claim-btn:hover {
+    background-color: #fff;
+    color: #000;
+}
+
+/* In-App Browser Component */
+.browser-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: #121212;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    transition: opacity 0.3s ease;
+}
+
+.browser-modal.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.browser-header {
+    height: 50px;
+    background-color: #1a1a1d;
+    border-bottom: 1px solid #282828;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+}
+
+.close-btn {
+    background: transparent;
+    border: none;
+    color: #a0a0a0;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    padding: 8px 16px;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.close-btn:hover {
+    background-color: rgba(255,255,255,0.1);
+    color: #fff;
+}
+
+.browser-title {
+    margin-left: 20px;
+    font-weight: 600;
+    color: #fff;
+    font-size: 14px;
+    flex-grow: 1;
+    text-align: center;
+}
+
+.browser-content {
+    flex-grow: 1;
+    position: relative;
+    background: #fff;
+}
+
+#browser-frame {
+    width: 100%;
+    height: 100%;
+    border: none;
+}
+
+/* Loaders */
+.loader-container {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 300px;
+    color: #888;
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid rgba(0, 216, 255, 0.2);
+    border-top: 4px solid #00d8ff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 20px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
