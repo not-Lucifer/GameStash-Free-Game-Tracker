@@ -17,24 +17,47 @@
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
                     Storefront
                 </a>
-                <a href="#" class="nav-item">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
-                    Library
-                </a>
             </nav>
         </aside>
 
         <main class="main-content">
             <header class="top-bar">
-                <div class="search-bar">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                    <input type="text" placeholder="Search giveaways...">
+                <div class="header-left">
+                    <div class="search-bar">
+                        <span style="font-size: 18px; color: #888; margin-right: 10px;">🔍</span>
+                        <input type="text" placeholder="Search giveaways..." id="search-input">
+                    </div>
+                </div>
+                <div class="header-right">
+                    <button class="notification-center-btn" onclick="showNotificationCenter()" title="View new games">
+                        <span style="font-size: 20px;">🔔</span>
+                        <span class="notification-badge" id="notification-badge" style="display: none;">0</span>
+                    </button>
+                    <button class="refresh-btn" onclick="refreshAllGames()" title="Refresh games" id="refresh-button">
+                        <span style="font-size: 20px; display: inline-block; transition: transform 0.3s;">↻</span>
+                    </button>
                 </div>
             </header>
 
+            <div id="debug-info" style="display: none; background: #1a1a1d; border: 1px solid #00d8ff; padding: 15px; margin: 10px 20px; border-radius: 8px; font-size: 12px; color: #00d8ff; font-family: monospace; max-height: 150px; overflow-y: auto;">
+                <strong>Debug Info:</strong>
+                <div id="debug-messages"></div>
+            </div>
+
             <div class="hero-section">
-                <h1>Featured <span>Freebies</span></h1>
-                <p>Curated list of 100% free trusted DRM games (Steam, Epic, GOG, Itchio).</p>
+                <div class="hero-content">
+                    <div>
+                        <h1>Featured <span>Freebies</span></h1>
+                        <p>Curated list of 100% free trusted DRM games (Steam, Epic, GOG, Itchio).</p>
+                    </div>
+                    <div class="filter-buttons">
+                        <button class="filter-btn active" data-filter="all">All Games</button>
+                        <button class="filter-btn" data-filter="Steam">Steam</button>
+                        <button class="filter-btn" data-filter="Epic">Epic</button>
+                        <button class="filter-btn" data-filter="GOG">GOG</button>
+                        <button class="filter-btn" data-filter="Itch">Itch.io</button>
+                    </div>
+                </div>
             </div>
 
             <div class="games-grid" id="games-grid">
@@ -44,6 +67,22 @@
                 </div>
             </div>
         </main>
+
+        <!-- Notification Center Modal -->
+        <div id="notification-modal" class="notification-modal hidden">
+            <div class="notification-modal-content">
+                <div class="notification-modal-header">
+                    <h2>New Notifications</h2>
+                    <button class="modal-close-btn" onclick="closeNotificationCenter()">✕</button>
+                </div>
+                <div class="notification-modal-body" id="notification-list">
+                    <p>Loading notifications...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast Notification System -->
+        <div id="toast-container" class="toast-container"></div>
     </div>
 
     <!-- In-App Browser Modal -->
@@ -54,30 +93,229 @@
         </div>
         <div class="browser-content">
             <!-- Iframe to show the external store link within the app -->
-            <iframe id="browser-frame" src="about:blank" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+            <iframe id="browser-frame" src="about:blank" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-top-navigation allow-top-navigation-by-user-activation allow-pointer-lock allow-popups-to-escape-sandbox"></iframe>
         </div>
     </div>
 
     <script>
+        const DEBUG = true; // Set to true for debug output
+        let allGames = []; // Store all games for filtering
+        let currentFilter = 'all'; // Track current filter
+        let newGameNotifications = []; // Track new games that have notifications
+        
+        // Initialize from localStorage
+        function initializeNotifications() {
+            const stored = localStorage.getItem('notifiedGames');
+            if (stored) {
+                try {
+                    newGameNotifications = JSON.parse(stored);
+                } catch (e) {
+                    newGameNotifications = [];
+                }
+            }
+        }
+        
+        // Save notifications to localStorage
+        function saveNotifications() {
+            localStorage.setItem('notifiedGames', JSON.stringify(newGameNotifications));
+        }
+        
+        // Check for new games on load
+        function checkForNewGames(games) {
+            const previousGames = JSON.parse(localStorage.getItem('previousGames') || '[]');
+            const previousIds = new Set(previousGames.map(g => g.id));
+            
+            let newGames = [];
+            games.forEach(game => {
+                if (!previousIds.has(game.id)) {
+                    newGames.push(game);
+                }
+            });
+            
+            // Save current games
+            localStorage.setItem('previousGames', JSON.stringify(games.slice(0, 10)));
+            
+            return newGames;
+        }
+
+        function showToast(message, duration = 3000) {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.textContent = message;
+            container.appendChild(toast);
+            
+            // Trigger animation
+            setTimeout(() => toast.classList.add('show'), 10);
+            
+            // Remove after duration
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        }
+
+        function addDebugLog(msg) {
+            if (!DEBUG) return;
+            const debugDiv = document.getElementById('debug-messages');
+            const timestamp = new Date().toLocaleTimeString();
+            const line = document.createElement('div');
+            line.textContent = `[${timestamp}] ${msg}`;
+            debugDiv.appendChild(line);
+            document.getElementById('debug-info').style.display = 'block';
+            debugDiv.scrollTop = debugDiv.scrollHeight;
+        }
+
+
+
+        function showNotificationCenter() {
+            const modal = document.getElementById('notification-modal');
+            const listDiv = document.getElementById('notification-list');
+            
+            if (newGameNotifications.length === 0) {
+                listDiv.innerHTML = '<p style="text-align: center; padding: 20px; color: #888;">There are no new notifications</p>';
+            } else {
+                let html = '';
+                newGameNotifications.forEach((game, idx) => {
+                    html += `
+                        <div class="notification-item">
+                            <div class="notification-game-title">${game.title}</div>
+                            <div class="notification-game-platform">${game.platforms}</div>
+                            <button class="notification-claim-btn" onclick="openBrowser('${game.open_giveaway_url}', '${game.title.replace(/'/g, "\\'")}')">Claim Now</button>
+                        </div>
+                    `;
+                });
+                listDiv.innerHTML = html;
+            }
+            
+            modal.classList.remove('hidden');
+        }
+
+        function closeNotificationCenter() {
+            document.getElementById('notification-modal').classList.add('hidden');
+        }
+
+        function updateNotificationBadge() {
+            const badge = document.getElementById('notification-badge');
+            if (newGameNotifications.length > 0) {
+                badge.textContent = newGameNotifications.length;
+                badge.style.display = 'block';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+
         const modal = document.getElementById('browser-modal');
         const iframe = document.getElementById('browser-frame');
         const browserTitle = document.getElementById('browser-title');
 
-        // Note: fetchGiveaways() and resolveDirectUrl() are C++ functions exposed to JS via Zserge Webview
         async function openBrowser(url, title) {
-            browserTitle.innerText = "Resolving store URL...";
+            browserTitle.innerText = "Loading store...";
             modal.classList.remove('hidden');
             iframe.src = 'about:blank';
             
             try {
-                // Wait for C++ backend to handle the HTTPS WinHttp redirects and return the Epic/Steam URL
-                const directUrl = await resolveDirectUrl(url);
+                addDebugLog('Resolving URL: ' + url);
+                let finalUrl = await resolveDirectUrl(url);
+                addDebugLog('Resolved to: ' + finalUrl);
+                
+                // Make sure URL is a string
+                if (typeof finalUrl === 'string') {
+                    finalUrl = finalUrl.replace(/^"|"$/g, ''); // Remove quotes if any
+                }
+                
+                addDebugLog('URL domain check - itch.io: ' + finalUrl.includes('itch.io') + ', epicgames: ' + finalUrl.includes('epicgames.com'));
+
+                // Check if it's Itch.io - if so, open in system browser instead
+                if (finalUrl.includes('itch.io') || url.includes('itch.io')) {
+                    addDebugLog('Detected Itch.io URL, opening in system browser: ' + finalUrl);
+                    browserTitle.innerText = title;
+                    
+                    const line = document.createElement('div');
+                    line.style.cssText = 'padding: 40px; text-align: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI"; color: #333;';
+                    line.innerHTML = `
+                        <div style="font-size: 48px; margin-bottom: 20px;">📲</div>
+                        <h2 style="margin: 0 0 10px 0;">Opening Itch.io Store...</h2>
+                        <p style="color: #666; margin: 0;">The page is opening in your default browser</p>
+                    `;
+                    iframe.parentNode.innerHTML = line.outerHTML;
+                    
+                    // Open in system browser
+                    if (typeof openInBrowser !== 'undefined') {
+                        addDebugLog('Calling openInBrowser with: ' + finalUrl);
+                        openInBrowser(finalUrl);
+                    } else {
+                        addDebugLog('openInBrowser binding not available');
+                    }
+                    
+                    sendNotification('Game Stash', 'Opening ' + title + ' in browser');
+                    
+                    // Close modal after 3 seconds
+                    setTimeout(() => {
+                        closeBrowser();
+                    }, 3000);
+                    return;
+                }
+
+                // Check if it's Epic Games - if so, open in system browser instead
+                if (finalUrl.includes('epicgames.com') || url.includes('epicgames.com')) {
+                    addDebugLog('Detected Epic Games URL, opening in system browser: ' + finalUrl);
+                    browserTitle.innerText = title;
+                    
+                    const line = document.createElement('div');
+                    line.style.cssText = 'padding: 40px; text-align: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI"; color: #333;';
+                    line.innerHTML = `
+                        <div style="font-size: 48px; margin-bottom: 20px;">📲</div>
+                        <h2 style="margin: 0 0 10px 0;">Opening Epic Games Store...</h2>
+                        <p style="color: #666; margin: 0;">The page is opening in your default browser</p>
+                    `;
+                    iframe.parentNode.innerHTML = line.outerHTML;
+                    
+                    // Open in system browser
+                    if (typeof openInBrowser !== 'undefined') {
+                        addDebugLog('Calling openInBrowser with: ' + finalUrl);
+                        openInBrowser(finalUrl);
+                    } else {
+                        addDebugLog('openInBrowser binding not available');
+                    }
+                    
+                    sendNotification('Game Stash', 'Opening ' + title + ' in browser');
+                    
+                    // Close modal after 3 seconds
+                    setTimeout(() => {
+                        closeBrowser();
+                    }, 3000);
+                    return;
+                }
+                
+                addDebugLog('Setting iframe src to: ' + finalUrl);
                 browserTitle.innerText = title;
-                iframe.src = directUrl;
+                iframe.src = finalUrl;
+                sendNotification('Game Stash', 'Opening: ' + title);
             } catch (e) {
-                // If it fails, fallback to the original tracker link
+                addDebugLog('URL resolution error: ' + e.message + ', trying fallback URL: ' + url);
                 browserTitle.innerText = title;
-                iframe.src = url;
+                
+                // Check if it's Itch.io
+                if (url.includes('itch.io')) {
+                    addDebugLog('Error resolving Itch.io URL, opening in system browser: ' + url);
+                    const line = document.createElement('div');
+                    line.style.cssText = 'padding: 40px; text-align: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI"; color: #333;';
+                    line.innerHTML = `
+                        <div style="font-size: 48px; margin-bottom: 20px;">📲</div>
+                        <h2 style="margin: 0 0 10px 0;">Opening Itch.io Store...</h2>
+                        <p style="color: #666; margin: 0;">The page is opening in your default browser</p>
+                    `;
+                    iframe.parentNode.innerHTML = line.outerHTML;
+                    
+                    if (typeof openInBrowser !== 'undefined') {
+                        openInBrowser(url);
+                    }
+                    setTimeout(() => closeBrowser(), 3000);
+                } else {
+                    iframe.src = url;
+                }
+                sendNotification('Game Stash', 'Opening: ' + title);
             }
         }
 
@@ -87,20 +325,48 @@
             browserTitle.innerText = '';
         }
 
-        async function loadGames() {
-            try {
-                const dataStr = await fetchGiveaways();
-                const games = JSON.parse(dataStr);
-                const grid = document.getElementById('games-grid');
-                grid.innerHTML = '';
+        function refreshAllGames() {
+            const btn = document.getElementById('refresh-button');
+            const icon = btn.querySelector('span');
+            btn.disabled = true;
+            icon.style.animation = 'spin 1s linear infinite';
+            
+            loadGames().finally(() => {
+                btn.disabled = false;
+                icon.style.animation = 'none';
+            });
+        }
 
-                if (games.length === 0) {
-                    grid.innerHTML = '<p>No trusted giveaways found.</p>';
-                    return;
-                }
+        function getFilterDisplayName(game) {
+            const platforms = game.platforms || '';
+            if (platforms.includes('Steam')) return 'Steam';
+            if (platforms.includes('Epic Games')) return 'Epic';
+            if (platforms.includes('GOG')) return 'GOG';
+            if (platforms.includes('Itch') || platforms.includes('itch')) return 'Itch';
+            return 'Other';
+        }
 
-                games.forEach(game => {
-                    // Safe injection
+        function filterGames(filter) {
+            const grid = document.getElementById('games-grid');
+            grid.innerHTML = '';
+            
+            let filtered = allGames;
+            if (filter !== 'all') {
+                filtered = allGames.filter(game => {
+                    const platforms = game.platforms || '';
+                    if (filter === 'Epic') return platforms.includes('Epic Games');
+                    if (filter === 'Itch') return platforms.includes('Itch') || platforms.includes('itch');
+                    return platforms.includes(filter);
+                });
+            }
+
+            if (filtered.length === 0) {
+                grid.innerHTML = '<p>No games found for this filter.</p>';
+                return;
+            }
+
+            filtered.forEach((game, idx) => {
+                try {
                     const cleanTitle = game.title.replace(/'/g, "\\'");
                     const priceSubText = game.worth_inr !== 'N/A' ? `<span class="price-strikethrough">${game.worth_inr}</span>` : '';
                     
@@ -120,11 +386,164 @@
                         </div>
                     `;
                     grid.appendChild(card);
+                } catch (e) {
+                    addDebugLog('Error rendering game ' + idx + ': ' + e.message);
+                }
+            });
+        }
+
+        function searchGames(query) {
+            const grid = document.getElementById('games-grid');
+            grid.innerHTML = '';
+            const lowerQuery = query.toLowerCase();
+            
+            let results = allGames.filter(game => 
+                game.title.toLowerCase().includes(lowerQuery)
+            );
+
+            if (results.length === 0) {
+                grid.innerHTML = '<p>No games match your search.</p>';
+                return;
+            }
+
+            results.forEach((game, idx) => {
+                try {
+                    const cleanTitle = game.title.replace(/'/g, "\\'");
+                    const priceSubText = game.worth_inr !== 'N/A' ? `<span class="price-strikethrough">${game.worth_inr}</span>` : '';
+                    
+                    const card = document.createElement('div');
+                    card.className = 'game-card';
+                    card.innerHTML = `
+                        <div class="game-image" style="background-image: url('${game.thumbnail}')">
+                            <div class="platform-badge">${game.platforms}</div>
+                        </div>
+                        <div class="game-info">
+                            <h3>${game.title}</h3>
+                            <div class="price-row">
+                                ${priceSubText}
+                                <span class="price-free">FREE</span>
+                            </div>
+                            <button class="claim-btn" onclick="openBrowser('${game.open_giveaway_url}', '${cleanTitle}')">Claim Now</button>
+                        </div>
+                    `;
+                    grid.appendChild(card);
+                } catch (e) {
+                    addDebugLog('Error rendering game ' + idx + ': ' + e.message);
+                }
+            });
+        }
+
+        async function loadGames() {
+            try {
+                addDebugLog('Starting loadGames...');
+                
+                if (typeof fetchGiveaways === 'undefined') {
+                    addDebugLog('ERROR: fetchGiveaways binding not found');
+                    throw new Error('C++ binding not loaded');
+                }
+                
+                addDebugLog('Calling fetchGiveaways...');
+                let dataResult = await fetchGiveaways();
+                addDebugLog('Got response (type: ' + typeof dataResult + ')');
+                
+                let data = [];
+                
+                if (typeof dataResult === 'string') {
+                    addDebugLog('Response is string, parsing JSON...');
+                    try {
+                        data = JSON.parse(dataResult);
+                    } catch (e) {
+                        addDebugLog('JSON parse error: ' + e.message);
+                        throw e;
+                    }
+                } else if (typeof dataResult === 'object' && dataResult !== null) {
+                    addDebugLog('Response is already parsed object/array');
+                    data = dataResult;
+                } else if (dataResult === null || dataResult === undefined) {
+                    addDebugLog('Response is empty/null');
+                    data = [];
+                } else {
+                    addDebugLog('Unexpected response type: ' + typeof dataResult);
+                    throw new Error('Unexpected response format');
+                }
+                
+                addDebugLog('Data is array: ' + Array.isArray(data));
+
+                if (data && typeof data === 'object' && data.error) {
+                    addDebugLog('Backend error: ' + data.error);
+                    throw new Error('Backend error: ' + data.error);
+                }
+
+                if (!Array.isArray(data)) {
+                    addDebugLog('Data is not array, wrapping or converting...');
+                    if (typeof data === 'object' && Object.keys(data).length === 0) {
+                        data = [];
+                    } else {
+                        data = [data];
+                    }
+                }
+                
+                const grid = document.getElementById('games-grid');
+
+                if (data.length === 0) {
+                    addDebugLog('No games found, showing message...');
+                    grid.innerHTML = '<p>No trusted giveaways found. Check your internet connection.</p>';
+                    return;
+                }
+
+                allGames = data;
+                currentFilter = 'all';
+                document.querySelectorAll('.filter-btn').forEach(btn => {
+                    btn.classList.remove('active');
+                    if (btn.getAttribute('data-filter') === 'all') {
+                        btn.classList.add('active');
+                    }
                 });
+
+                addDebugLog('Rendering ' + data.length + ' games...');
+                filterGames('all');
+                sendNotification('Game Stash', 'Loaded ' + data.length + ' games!');
+                addDebugLog('Games loaded successfully!');
             } catch (error) {
-                document.getElementById('games-grid').innerHTML = '<p style="color:red">Error syncing with database. Launch over active connection.</p>';
+                addDebugLog('ERROR: ' + error.message + ' (Stack: ' + error.stack + ')');
+                document.getElementById('games-grid').innerHTML = `<p style="color:red">Error: ${error.message || 'Failed to load games'}</p>`;
             }
         }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // Setup filter buttons
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    currentFilter = btn.getAttribute('data-filter');
+                    filterGames(currentFilter);
+                });
+            });
+
+            // Setup search
+            const searchInput = document.getElementById('search-input');
+            let searchTimeout;
+            searchInput.addEventListener('input', (e) => {
+                clearTimeout(searchTimeout);
+                const query = e.target.value.trim();
+                if (query.length === 0) {
+                    filterGames(currentFilter);
+                } else {
+                    searchTimeout = setTimeout(() => {
+                        searchGames(query);
+                    }, 300);
+                }
+            });
+
+            // Request notification permission
+            if ('Notification' in window && Notification.permission === 'default') {
+                Notification.requestPermission();
+            }
+
+            loadGames();
+        });
     </script>
 </body>
 </html>
