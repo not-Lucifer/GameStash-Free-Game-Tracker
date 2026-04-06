@@ -34,3 +34,8 @@ out/
 run_out.txt
 vs_path.txt
 *.swp
+
+# Secrets & Configuration (NEVER commit real credentials)
+oauth_config.json
+gamestash.db
+debug.log
