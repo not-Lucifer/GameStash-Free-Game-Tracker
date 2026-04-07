@@ -124,4 +124,4 @@ For issues and questions, please open an [Issue](../../issues) on GitHub.
 
 ---
 
-**Made with ❤️ by Game Stash Community**
+**Made with ❤️ by Aman Singh**
