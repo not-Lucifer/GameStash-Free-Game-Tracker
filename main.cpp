@@ -884,9 +884,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             sqlite3_bind_text(stmt, 2, hash.c_str(), -1, SQLITE_TRANSIENT);
 
             json user;
+            int user_db_id = -1;
             if (sqlite3_step(stmt) == SQLITE_ROW) {
-                user["db_id"] = sqlite3_column_int(stmt, 0);
-                user["id"] = sqlite3_column_int(stmt, 0);
+                user_db_id = sqlite3_column_int(stmt, 0);
+                user["db_id"] = user_db_id;
+                user["id"] = user_db_id;
                 user["name"] = std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)));
                 user["email"] = std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2)));
                 user["provider"] = std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3)));
@@ -902,6 +904,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             sqlite3_finalize(stmt);
 
             if (user.empty()) return json({{"error", "Invalid email or password"}}).dump();
+            
+            // Set global user ID for sync operations
+            g_user_id = std::to_string(user_db_id);
+            
+            // Trigger sync in background to reduce load during gameplay
+            std::thread sync_thread([&]() {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                supabase_sync_claimed_games(g_user_id);
+                supabase_sync_user_profile(g_user_id, user);
+                debug_log("Startup sync completed for user: " + g_user_id);
+            });
+            sync_thread.detach();
+            
             return json({{"success", true}, {"user", user}}).dump();
         } catch (const std::exception& e) {
             return json({{"error", e.what()}}).dump();
