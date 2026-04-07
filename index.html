@@ -8,6 +8,30 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 </head>
 <body>
+    <script>
+        // Global error handler to catch all JavaScript errors
+        window.addEventListener('error', (event) => {
+            const error = `JS Error: ${event.message} at ${event.filename}:${event.lineno}:${event.colno}`;
+            console.error(error);
+            // Try to log to backend if invokable is available
+            if (window.invokableFunctionExists && typeof window.invokableFunctionExists === 'function') {
+                try {
+                    window.invokableFunctionExists('jsErrorLog', [error]);
+                } catch (e) {
+                    // Fallback if invokable doesn't work
+                    console.log("Could not send error to backend:", e);
+                }
+            }
+        });
+
+        // Handle unhandled promise rejections
+        window.addEventListener('unhandledrejection', (event) => {
+            const error = `Unhandled Promise Rejection: ${event.reason}`;
+            console.error(error);
+        });
+
+        console.log("GameStash loaded successfully");
+    </script>
     <div class="app-wrapper">
         <!-- Edge Collapse Button -->
         <button id="sidebar-toggle" class="sidebar-edge-toggle" onclick="toggleSidebar()" title="Toggle sidebar">

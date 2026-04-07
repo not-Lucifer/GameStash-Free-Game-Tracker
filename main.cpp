@@ -1689,9 +1689,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     )");
 
     // ─── Navigate and run ─────────────────────────────────────────────────────
-    w.navigate(g_app_html_path);
-    w.run();
+    debug_log("About to navigate to HTML and start webview...");
+    try {
+        w.navigate(g_app_html_path);
+        debug_log("Navigation successful, starting message loop...");
+        w.run();
+        debug_log("Message loop ended normally");
+    } catch (const std::exception& e) {
+        debug_log("ERROR: WebView crashed with exception: " + std::string(e.what()));
+        // Keep window open for 5 seconds so user can see the error
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+    } catch (...) {
+        debug_log("ERROR: WebView crashed with unknown exception");
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+    }
 
     if (g_db) sqlite3_close(g_db);
+    debug_log("Application exiting normally");
     return 0;
 }
