@@ -43,6 +43,7 @@ Source: "dist\GameStash_v1.0.0\brotlidec.dll"; DestDir: "{app}"; Flags: ignoreve
 Source: "dist\GameStash_v1.0.0\brotlienc.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\GameStash_v1.0.0\Microsoft.Web.WebView2.Core.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\GameStash_v1.0.0\oauth_config.json.example"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\GameStash_v1.0.0\supabase_config.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\GameStash_v1.0.0\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\GameStash_v1.0.0\SETUP.md"; DestDir: "{app}"; Flags: ignoreversion
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files

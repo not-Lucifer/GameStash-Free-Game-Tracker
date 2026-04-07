@@ -44,9 +44,9 @@ std::string g_db_path;
 json g_oauth_config;
 
 // ─── Supabase Configuration ───────────────────────────────────────────────────
-// Replace with your Supabase project URL and anon key
-const std::string SUPABASE_URL = "https://dzhsobheihoickgvwyqt.supabase.co";
-const std::string SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR6aHNvYmhlaWhvaWNrZ3Z3eXF0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0ODcyMTksImV4cCI6MjA5MTA2MzIxOX0.mrOw39fXCR2M02lnLa1xjWdN1SMWB_WUOpOYWeXTsLQ";
+// Loaded from supabase_config.json at startup (not hardcoded!)
+std::string g_supabase_url = "";
+std::string g_supabase_anon_key = "";
 const std::string SUPABASE_API_VERSION = "2024-01-01";
 std::string g_user_id = "";  // Set after login
 std::mutex g_supabase_mutex;
@@ -265,6 +265,33 @@ std::string read_file(const std::string& filepath) {
     return buffer.str();
 }
 
+// ─── Load Supabase Configuration ──────────────────────────────────────────────
+bool load_supabase_config(const std::string& config_path) {
+    std::string config_content = read_file(config_path);
+    if (config_content.empty()) {
+        debug_log("Warning: Could not read Supabase config from: " + config_path);
+        return false;
+    }
+    
+    try {
+        json config = json::parse(config_content);
+        if (config.contains("supabase")) {
+            g_supabase_url = config["supabase"].value("url", "");
+            g_supabase_anon_key = config["supabase"].value("anon_key", "");
+            
+            if (g_supabase_url.empty() || g_supabase_anon_key.empty()) {
+                debug_log("Error: Supabase config incomplete (missing url or anon_key)");
+                return false;
+            }
+            debug_log("Supabase config loaded from: " + config_path);
+            return true;
+        }
+    } catch (const std::exception& e) {
+        debug_log("Error parsing Supabase config: " + std::string(e.what()));
+    }
+    return false;
+}
+
 // ─── INR Conversion ───────────────────────────────────────────────────────────
 std::string get_worth_in_inr(const std::string& worth_usd) {
     if (worth_usd == "N/A") return "N/A";
@@ -391,7 +418,7 @@ std::string winhttp_post(const std::string& url, const std::string& body,
 
 // Sync claimed games to Supabase
 bool supabase_sync_claimed_games(const std::string& user_id) {
-    if (user_id.empty() || g_user_id.empty()) return false;
+    if (user_id.empty() || g_user_id.empty() || g_supabase_url.empty()) return false;
     
     std::lock_guard<std::mutex> lock(g_supabase_mutex);
     
@@ -421,7 +448,7 @@ bool supabase_sync_claimed_games(const std::string& user_id) {
     sqlite3_finalize(stmt);
     
     // Send to Supabase REST API
-    std::string url = SUPABASE_URL + "/rest/v1/claimed_games";
+    std::string url = g_supabase_url + "/rest/v1/claimed_games";
     
     for (const auto& game : games_array) {
         json payload = {
@@ -434,7 +461,7 @@ bool supabase_sync_claimed_games(const std::string& user_id) {
             {"claimed_at", game["claimed_at"]}
         };
         
-        std::string headers = "Authorization: Bearer " + SUPABASE_ANON_KEY + "\r\nContent-Type: application/json\r\n";
+        std::string headers = "Authorization: Bearer " + g_supabase_anon_key + "\r\nContent-Type: application/json\r\n";
         std::string response = winhttp_post(url, payload.dump(), headers);
         debug_log("Supabase sync response: " + response);
     }
@@ -444,11 +471,11 @@ bool supabase_sync_claimed_games(const std::string& user_id) {
 
 // Sync user profile to Supabase
 bool supabase_sync_user_profile(const std::string& user_id, const json& profile_data) {
-    if (user_id.empty()) return false;
+    if (user_id.empty() || g_supabase_url.empty()) return false;
     
     std::lock_guard<std::mutex> lock(g_supabase_mutex);
     
-    std::string url = SUPABASE_URL + "/rest/v1/user_profiles?user_id=eq." + user_id;
+    std::string url = g_supabase_url + "/rest/v1/user_profiles?user_id=eq." + user_id;
     
     json payload = {
         {"user_id", user_id},
@@ -457,7 +484,7 @@ bool supabase_sync_user_profile(const std::string& user_id, const json& profile_
         {"favorite_platform", profile_data.value("favorite_platform", "")}
     };
     
-    std::string headers = "Authorization: Bearer " + SUPABASE_ANON_KEY + "\r\nContent-Type: application/json\r\n";
+    std::string headers = "Authorization: Bearer " + g_supabase_anon_key + "\r\nContent-Type: application/json\r\n";
     std::string response = winhttp_post(url, payload.dump(), headers);
     debug_log("Supabase profile sync response: " + response);
     
@@ -650,6 +677,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     } catch (...) {
         g_oauth_config = json::object();
         debug_log("Warning: could not parse oauth_config.json");
+    }
+
+    // Load Supabase config from resource directory
+    std::string supabase_config_path = g_resource_dir + "\\supabase_config.json";
+    if (!load_supabase_config(supabase_config_path)) {
+        // Try as fallback
+        if (!load_supabase_config(g_resource_dir + "\\..\\supabase_config.json")) {
+            MessageBoxW(NULL, L"Warning: Could not load Supabase configuration!\n\nPlease ensure supabase_config.json exists.\n\nThe app will work offline but won't sync to the cloud.", L"GameStash", MB_ICONWARNING);
+        }
     }
 
     // Init Database

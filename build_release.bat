@@ -57,9 +57,10 @@ REM Copy setup guide
 echo [*] Copying setup guide...
 copy "SETUP.md" "%DIST_FOLDER%\SETUP.md" >nul
 
-REM Copy configuration template
+REM Copy configuration files
 echo [*] Copying configuration files...
 copy "oauth_config.json.example" "%DIST_FOLDER%\oauth_config.json.example" >nul
+copy "supabase_config.json" "%DIST_FOLDER%\supabase_config.json" >nul
 
 REM Copy WebView2 runtime loader if available
 echo [*] Checking for WebView2 runtime files...
