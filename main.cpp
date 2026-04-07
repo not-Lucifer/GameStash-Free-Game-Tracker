@@ -16,10 +16,12 @@ using json = nlohmann::json;
 
 #include <windows.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <winhttp.h>
 #include <wincrypt.h>
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "crypt32.lib")
+#pragma comment(lib, "shell32.lib")
 
 // SQLite
 #include <sqlite3.h>
@@ -40,6 +42,14 @@ std::string g_app_dir;
 std::string g_resource_dir;
 std::string g_db_path;
 json g_oauth_config;
+
+// ─── Supabase Configuration ───────────────────────────────────────────────────
+// Replace with your Supabase project URL and anon key
+const std::string SUPABASE_URL = "https://dzhsobheihoickgvwyqt.supabase.co";
+const std::string SUPABASE_ANON_KEY = "sb_anon_eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9";
+const std::string SUPABASE_API_VERSION = "2024-01-01";
+std::string g_user_id = "";  // Set after login
+std::mutex g_supabase_mutex;
 
 // OAuth local server state
 std::atomic<bool> g_oauth_server_running{false};
@@ -214,6 +224,38 @@ std::string get_app_directory() {
     return "";
 }
 
+// ─── Get AppData Roaming Folder ───────────────────────────────────────────────
+std::string get_appdata_folder() {
+    char path[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, path))) {
+        return std::string(path);
+    }
+    // Fallback to environment variable
+    const char* appdata = getenv("APPDATA");
+    if (appdata) {
+        return std::string(appdata);
+    }
+    return "";
+}
+
+// ─── Ensure Directory Exists ──────────────────────────────────────────────────
+bool ensure_directory_exists(const std::string& path) {
+    // Use CreateDirectoryA which creates single level only
+    // For nested creation, we need to check parent first
+    size_t pos = 0;
+    while ((pos = path.find('\\', pos)) != std::string::npos) {
+        std::string dir = path.substr(0, pos++);
+        if (!dir.empty() && !CreateDirectoryA(dir.c_str(), NULL)) {
+            // Directory might already exist, which is OK
+            if (GetLastError() != ERROR_ALREADY_EXISTS) {
+                // Might fail for other reasons, but continue trying
+            }
+        }
+    }
+    // Create the final directory
+    return CreateDirectoryA(path.c_str(), NULL) != 0 || GetLastError() == ERROR_ALREADY_EXISTS;
+}
+
 // ─── Read Local File ──────────────────────────────────────────────────────────
 std::string read_file(const std::string& filepath) {
     std::ifstream file(filepath);
@@ -343,6 +385,83 @@ std::string winhttp_post(const std::string& url, const std::string& body,
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
     return response;
+}
+
+// ─── Supabase Integration ─────────────────────────────────────────────────────
+
+// Sync claimed games to Supabase
+bool supabase_sync_claimed_games(const std::string& user_id) {
+    if (user_id.empty() || g_user_id.empty()) return false;
+    
+    std::lock_guard<std::mutex> lock(g_supabase_mutex);
+    
+    // Get all claimed games for this user from local database
+    std::string sql = "SELECT game_id, title, platforms, worth_inr, open_giveaway_url, claimed_at FROM claimed_games WHERE user_id = ?";
+    sqlite3_stmt* stmt;
+    
+    if (sqlite3_prepare_v2(g_db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        debug_log("Failed to prepare claimed games query");
+        return false;
+    }
+    
+    json games_array = json::array();
+    
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        json game_obj = {
+            {"game_id", sqlite3_column_int(stmt, 0)},
+            {"title", reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1))},
+            {"platforms", reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2))},
+            {"worth_inr", reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3))},
+            {"open_giveaway_url", reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4))},
+            {"claimed_at", reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5))}
+        };
+        games_array.push_back(game_obj);
+    }
+    
+    sqlite3_finalize(stmt);
+    
+    // Send to Supabase REST API
+    std::string url = SUPABASE_URL + "/rest/v1/claimed_games";
+    
+    for (const auto& game : games_array) {
+        json payload = {
+            {"user_id", user_id},
+            {"game_id", game["game_id"]},
+            {"title", game["title"]},
+            {"platforms", game["platforms"]},
+            {"worth_inr", game["worth_inr"]},
+            {"open_giveaway_url", game["open_giveaway_url"]},
+            {"claimed_at", game["claimed_at"]}
+        };
+        
+        std::string headers = "Authorization: Bearer " + SUPABASE_ANON_KEY + "\r\nContent-Type: application/json\r\n";
+        std::string response = winhttp_post(url, payload.dump(), headers);
+        debug_log("Supabase sync response: " + response);
+    }
+    
+    return true;
+}
+
+// Sync user profile to Supabase
+bool supabase_sync_user_profile(const std::string& user_id, const json& profile_data) {
+    if (user_id.empty()) return false;
+    
+    std::lock_guard<std::mutex> lock(g_supabase_mutex);
+    
+    std::string url = SUPABASE_URL + "/rest/v1/user_profiles?user_id=eq." + user_id;
+    
+    json payload = {
+        {"user_id", user_id},
+        {"bio", profile_data.value("bio", "")},
+        {"country", profile_data.value("country", "")},
+        {"favorite_platform", profile_data.value("favorite_platform", "")}
+    };
+    
+    std::string headers = "Authorization: Bearer " + SUPABASE_ANON_KEY + "\r\nContent-Type: application/json\r\n";
+    std::string response = winhttp_post(url, payload.dump(), headers);
+    debug_log("Supabase profile sync response: " + response);
+    
+    return true;
 }
 
 // ─── OAuth: Start Local Callback Server ───────────────────────────────────────
@@ -500,8 +619,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         debug_log("Development mode detected - using parent directory for resources");
     }
     
-    // Use resource directory for database
-    g_db_path = g_resource_dir + "\\gamestash.db";
+    // Set up AppData folder for database storage
+    std::string appdata_path = get_appdata_folder();
+    if (appdata_path.empty()) {
+        MessageBoxW(NULL, L"Failed to determine AppData directory!", L"GameStash Error", MB_ICONERROR);
+        return 1;
+    }
+    
+    std::string gamestash_appdata = appdata_path + "\\GameStash";
+    if (!ensure_directory_exists(gamestash_appdata)) {
+        debug_log("Warning: Could not create GameStash AppData directory, using app directory instead");
+        g_db_path = g_resource_dir + "\\gamestash.db";
+    } else {
+        g_db_path = gamestash_appdata + "\\gamestash.db";
+        debug_log("AppData directory created at: " + gamestash_appdata);
+    }
+    
     debug_log("Database Path: " + g_db_path);
 
     // Load OAuth config from resource directory

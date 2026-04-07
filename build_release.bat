@@ -49,6 +49,14 @@ echo [*] Copying web assets...
 copy "index.html" "%DIST_FOLDER%\index.html" >nul
 copy "style.css" "%DIST_FOLDER%\style.css" >nul
 
+REM Copy installer script
+echo [*] Copying installer script...
+copy "install.bat" "%DIST_FOLDER%\install.bat" >nul
+
+REM Copy setup guide
+echo [*] Copying setup guide...
+copy "SETUP.md" "%DIST_FOLDER%\SETUP.md" >nul
+
 REM Copy configuration template
 echo [*] Copying configuration files...
 copy "oauth_config.json.example" "%DIST_FOLDER%\oauth_config.json.example" >nul
@@ -66,44 +74,30 @@ if exist "vcpkg\installed\x64-windows\bin\sqlite3.dll" (
     echo     [+] sqlite3.dll copied
 )
 
-REM Create README file
-echo [*] Creating README...
-(
-    echo # Game Stash v%VERSION%
-    echo.
-    echo A free, open-source game giveaway tracker for Steam, Epic Games, GOG, and Itch.io
-    echo.
-    echo ## How to Use
-    echo.
-    echo 1. Extract this folder to your desired location
-    echo 2. Double-click GameStash.exe to launch
-    echo 3. Sign in or create an account to start tracking free games
-    echo.
-    echo ## Features
-    echo.
-    echo - Track free games from multiple platforms
-    echo - Personal profile with customization
-    echo - Email validation and secure authentication
-    echo - Database-backed game library
-    echo - Completely offline-capable
-    echo.
-    echo ## Configuration
-    echo.
-    echo To enable OAuth (optional):
-    echo 1. Rename oauth_config.json.example to oauth_config.json
-    echo 2. Add your OAuth credentials from Google/Discord
-    echo 3. Restart the app
-    echo.
-    echo ## System Requirements
-    echo.
-    echo - Windows 10 or later
-    echo - WebView2 runtime (auto-installed by the app if needed^)
-    echo.
-    echo ## License
-    echo.
-    echo Free to use and distribute
-    echo.
-) > "%DIST_FOLDER%\README.md"
+REM Copy Brotli runtime if available
+if exist "vcpkg\installed\x64-windows\bin\brotli.dll" (
+    copy "vcpkg\installed\x64-windows\bin\brotli.dll" "%DIST_FOLDER%\brotli.dll" >nul
+    echo     [+] brotli.dll copied
+)
+
+REM Copy all other necessary DLLs from vcpkg bin folder
+echo     [+] Copying additional dependencies...
+for %%F in (vcpkg\installed\x64-windows\bin\*.dll) do (
+    if not exist "%DIST_FOLDER%\%%~nxF" (
+        copy "%%F" "%DIST_FOLDER%\%%~nxF" >nul 2>&1
+    )
+)
+
+REM Create README file using PowerShell to avoid batch syntax issues
+echo [*] Creating README.md...
+powershell -Command "Add-Content -Path '%DIST_FOLDER%\README.md' -Value '# Game Stash v%VERSION%'; Add-Content -Path '%DIST_FOLDER%\README.md' -Value ''; Add-Content -Path '%DIST_FOLDER%\README.md' -Value 'A free, open-source game giveaway tracker for Windows'; Add-Content -Path '%DIST_FOLDER%\README.md' -Value ''; Add-Content -Path '%DIST_FOLDER%\README.md' -Value '## Installation'; Add-Content -Path '%DIST_FOLDER%\README.md' -Value ''; Add-Content -Path '%DIST_FOLDER%\README.md' -Value '### Option 1: Quick Install (Recommended)'; Add-Content -Path '%DIST_FOLDER%\README.md' -Value '1. Run install.bat as Administrator'; Add-Content -Path '%DIST_FOLDER%\README.md' -Value '2. Game Stash installed to Program Files with Start Menu shortcuts'; Add-Content -Path '%DIST_FOLDER%\README.md' -Value ''; Add-Content -Path '%DIST_FOLDER%\README.md' -Value '### Option 2: Portable Mode'; Add-Content -Path '%DIST_FOLDER%\README.md' -Value '1. Just double-click GameStash.exe'; Add-Content -Path '%DIST_FOLDER%\README.md' -Value '2. No installation needed'; Add-Content -Path '%DIST_FOLDER%\README.md' -Value ''; Add-Content -Path '%DIST_FOLDER%\README.md' -Value 'See SETUP.md for detailed instructions.'" > nul 2>&1
+
+if errorlevel 1 (
+    echo [!] WARNING: Failed to create detailed README
+    echo # Game Stash v%VERSION% > "%DIST_FOLDER%\README.md"
+    echo. >> "%DIST_FOLDER%\README.md"
+    echo See SETUP.md for installation instructions >> "%DIST_FOLDER%\README.md"
+)
 
 REM Create a portable launcher script
 echo [*] Creating launcher script...
@@ -122,6 +116,15 @@ if exist "%DIST_FOLDER%.zip" (
 
 powershell -Command "Compress-Archive -Path '%DIST_FOLDER%' -DestinationPath '%DIST_FOLDER%.zip' -Force" >nul 2>&1
 
+if errorlevel 1 (
+    echo [!] WARNING: ZIP creation may have failed
+    echo Attempting alternative method...
+    
+    if exist "%ProgramFiles%\7-Zip\7z.exe" (
+        "%ProgramFiles%\7-Zip\7z.exe" a "%DIST_FOLDER%.zip" "%DIST_FOLDER%" >nul 2>&1
+    )
+)
+
 echo.
 echo ========================================
 echo  Build Complete!
@@ -131,12 +134,14 @@ echo [+] Distribution folder: %DIST_FOLDER%
 echo [+] Portable ZIP: %DIST_FOLDER%.zip
 echo.
 echo Files included:
-echo   - GameStash.exe (main application^)
-echo   - index.html, style.css (web UI^)
-echo   - WebView2Loader.dll (WebView2 runtime^)
-echo   - sqlite3.dll (database engine^)
-echo   - oauth_config.json.example (OAuth template^)
-echo   - README.md (documentation^)
+echo   - GameStash.exe ^(main application^)
+echo   - index.html, style.css ^(web UI^)
+echo   - WebView2Loader.dll ^(WebView2 runtime^)
+echo   - sqlite3.dll ^(database engine^)
+echo   - install.bat ^(Windows installer^)
+echo   - SETUP.md ^(setup instructions^)
+echo   - oauth_config.json.example ^(OAuth template^)
+echo   - README.md ^(quick reference^)
 echo.
 echo Ready to distribute!
 echo ========================================
