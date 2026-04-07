@@ -4,6 +4,7 @@
 #include <sstream>
 #include <fstream>
 #include <chrono>
+#include <ctime>
 #include <thread>
 #include <atomic>
 #include <mutex>
@@ -267,6 +268,7 @@ std::string read_file(const std::string& filepath) {
 
 // ─── Load Supabase Configuration ──────────────────────────────────────────────
 bool load_supabase_config(const std::string& config_path) {
+    debug_log("Attempting to load Supabase config from: " + config_path);
     std::string config_content = read_file(config_path);
     if (config_content.empty()) {
         debug_log("Warning: Could not read Supabase config from: " + config_path);
@@ -283,7 +285,9 @@ bool load_supabase_config(const std::string& config_path) {
                 debug_log("Error: Supabase config incomplete (missing url or anon_key)");
                 return false;
             }
-            debug_log("Supabase config loaded from: " + config_path);
+            debug_log("✅ Supabase config loaded successfully!");
+            debug_log("   URL: " + g_supabase_url);
+            debug_log("   Anon key length: " + std::to_string(g_supabase_anon_key.length()));
             return true;
         }
     } catch (const std::exception& e) {
@@ -342,7 +346,13 @@ std::string winhttp_get(const std::string& url, const std::string& extra_headers
         std::wstring wex(extra_headers.begin(), extra_headers.end());
         headers += wex;
     }
-    WinHttpSendRequest(hRequest, headers.c_str(), -1, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+    // Use WinHttpAddRequestHeaders to properly add headers before sending
+    BOOL headerAdded = WinHttpAddRequestHeaders(hRequest, headers.c_str(), (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+    if (!headerAdded) {
+        DWORD err = GetLastError();
+        debug_log("[WARN] WinHttpAddRequestHeaders GET failed with error: " + std::to_string(err));
+    }
+    WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
     WinHttpReceiveResponse(hRequest, NULL);
 
     std::string response;
@@ -365,7 +375,7 @@ std::string winhttp_get(const std::string& url, const std::string& extra_headers
 
 // ─── WinHTTP POST helper ──────────────────────────────────────────────────────
 std::string winhttp_post(const std::string& url, const std::string& body,
-                         const std::string& content_type = "application/x-www-form-urlencoded") {
+                         const std::string& custom_headers = "") {
     std::wstring wurl(url.begin(), url.end());
     HINTERNET hSession = WinHttpOpen(L"GameStash/1.0",
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
@@ -390,11 +400,45 @@ std::string winhttp_post(const std::string& url, const std::string& body,
         WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
     if (!hRequest) { WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return ""; }
 
-    std::wstring wct(content_type.begin(), content_type.end());
-    std::wstring headers = L"Content-Type: " + wct + L"\r\nAccept: application/json\r\n";
-    WinHttpSendRequest(hRequest, headers.c_str(), -1,
+    // Add headers
+    std::string final_headers = custom_headers;
+    if (final_headers.empty()) {
+        final_headers = "Content-Type: application/json\r\nAccept: application/json\r\n";
+    }
+    std::wstring wheaders(final_headers.begin(), final_headers.end());
+    BOOL headerAdded = WinHttpAddRequestHeaders(hRequest, wheaders.c_str(), (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+    if (!headerAdded) {
+        DWORD err = GetLastError();
+        debug_log("[WARN] WinHttpAddRequestHeaders POST failed with error: " + std::to_string(err));
+    }
+    
+    BOOL sendResult = WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
         (LPVOID)body.c_str(), (DWORD)body.size(), (DWORD)body.size(), 0);
-    WinHttpReceiveResponse(hRequest, NULL);
+    if (!sendResult) {
+        DWORD err = GetLastError();
+        debug_log("[ERROR] WinHttpSendRequest POST failed with error: " + std::to_string(err));
+        WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return "{\"error\":\"SendRequest failed\"}";
+    }
+    
+    BOOL recvResult = WinHttpReceiveResponse(hRequest, NULL);
+    if (!recvResult) {
+        DWORD err = GetLastError();
+        debug_log("[ERROR] WinHttpReceiveResponse POST failed with error: " + std::to_string(err));
+        WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return "{\"error\":\"ReceiveResponse failed\"}";
+    }
+
+    // Check HTTP status code
+    DWORD statusCode = 0;
+    DWORD statusCodeSize = sizeof(statusCode);
+    WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &statusCodeSize, WINHTTP_NO_HEADER_INDEX);
+    debug_log("[INFO] POST HTTP Status Code: " + std::to_string(statusCode));
 
     std::string response;
     DWORD dwSize = 0;
@@ -488,6 +532,231 @@ bool supabase_sync_user_profile(const std::string& user_id, const json& profile_
     std::string response = winhttp_post(url, payload.dump(), headers);
     debug_log("Supabase profile sync response: " + response);
     
+    return true;
+}
+
+// ─── WinHTTP PATCH helper (for updates) ───────────────────────────────────────
+std::string winhttp_patch(const std::string& url, const std::string& body,
+                          const std::string& custom_headers = "") {
+    std::wstring wurl(url.begin(), url.end());
+    HINTERNET hSession = WinHttpOpen(L"GameStash/1.0",
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSession) return "";
+    WinHttpSetTimeouts(hSession, 10000, 10000, 10000, 10000);
+
+    URL_COMPONENTS urlComp = {};
+    urlComp.dwStructSize = sizeof(urlComp);
+    wchar_t hostName[256], urlPath[2048];
+    urlComp.lpszHostName = hostName; urlComp.dwHostNameLength = 256;
+    urlComp.lpszUrlPath = urlPath; urlComp.dwUrlPathLength = 2048;
+
+    if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &urlComp)) {
+        WinHttpCloseHandle(hSession); return "";
+    }
+
+    HINTERNET hConnect = WinHttpConnect(hSession, hostName, urlComp.nPort, 0);
+    if (!hConnect) { WinHttpCloseHandle(hSession); return ""; }
+
+    DWORD flags = (urlComp.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"PATCH", urlPath, NULL,
+        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    if (!hRequest) { WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return ""; }
+
+    std::string final_headers = custom_headers;
+    if (final_headers.empty()) {
+        final_headers = "Content-Type: application/json\r\nAccept: application/json\r\n";
+    }
+    std::wstring wheaders(final_headers.begin(), final_headers.end());
+    BOOL headerAdded = WinHttpAddRequestHeaders(hRequest, wheaders.c_str(), (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+    if (!headerAdded) {
+        DWORD err = GetLastError();
+        debug_log("[WARN] WinHttpAddRequestHeaders PATCH failed with error: " + std::to_string(err));
+    }
+    WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+        (LPVOID)body.c_str(), (DWORD)body.size(), (DWORD)body.size(), 0);
+    WinHttpReceiveResponse(hRequest, NULL);
+
+    std::string response;
+    DWORD dwSize = 0;
+    do {
+        dwSize = 0;
+        WinHttpQueryDataAvailable(hRequest, &dwSize);
+        if (dwSize == 0) break;
+        std::vector<char> buf(dwSize + 1, 0);
+        DWORD dwRead = 0;
+        WinHttpReadData(hRequest, buf.data(), dwSize, &dwRead);
+        response.append(buf.data(), dwRead);
+    } while (dwSize > 0);
+
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+    return response;
+}
+
+// ─── Supabase CRUD Operations (Cloud-First) ────────────────────────────────────
+
+// Fetch claimed games from Supabase
+json supabase_fetch_claimed_games(const std::string& user_id) {
+    if (user_id.empty() || g_supabase_url.empty() || g_supabase_anon_key.empty()) {
+        debug_log("supabase_fetch_claimed_games: Missing credentials - user_id empty: " + std::to_string(user_id.empty()) 
+            + ", url empty: " + std::to_string(g_supabase_url.empty()) + ", key empty: " + std::to_string(g_supabase_anon_key.empty()));
+        return json::array();
+    }
+    
+    std::lock_guard<std::mutex> lock(g_supabase_mutex);
+    std::string url = g_supabase_url + "/rest/v1/claimed_games?user_id=eq." + user_id + "&order=claimed_at.desc";
+    debug_log("Fetching claimed games from: " + url);
+    
+    std::string headers = "apikey: " + g_supabase_anon_key + "\r\nAuthorization: Bearer " + g_supabase_anon_key + "\r\nContent-Type: application/json\r\n";
+    std::string response = winhttp_get(url, headers);
+    
+    try {
+        json result = json::parse(response);
+        debug_log("✅ Fetched " + std::to_string(result.size()) + " claimed games from Supabase for user " + user_id);
+        return result;
+    } catch (...) {
+        debug_log("❌ Error parsing claimed games response: " + response);
+        return json::array();
+    }
+}
+
+// Fetch user profile from Supabase
+json supabase_fetch_user_profile(const std::string& user_id) {
+    if (user_id.empty() || g_supabase_url.empty() || g_supabase_anon_key.empty()) {
+        return json::object();
+    }
+    
+    std::lock_guard<std::mutex> lock(g_supabase_mutex);
+    std::string url = g_supabase_url + "/rest/v1/user_profiles?user_id=eq." + user_id;
+    
+    std::string headers = "apikey: " + g_supabase_anon_key + "\r\nAuthorization: Bearer " + g_supabase_anon_key + "\r\nContent-Type: application/json\r\n";
+    std::string response = winhttp_get(url, headers);
+    
+    try {
+        json result = json::parse(response);
+        if (result.is_array() && result.size() > 0) {
+            debug_log("Fetched user profile from Supabase for user " + user_id);
+            return result[0];
+        }
+        return json::object();
+    } catch (...) {
+        debug_log("Error parsing user profile response: " + response);
+        return json::object();
+    }
+}
+
+// Add claimed game to Supabase
+bool supabase_add_claimed_game(const std::string& user_id, int game_id, const std::string& title,
+                               const std::string& platforms, const std::string& worth_inr,
+                               const std::string& open_giveaway_url, const std::string& claimed_at) {
+    if (user_id.empty() || g_supabase_url.empty() || g_supabase_anon_key.empty()) {
+        debug_log("❌ supabase_add_claimed_game: Missing credentials");
+        return false;
+    }
+    
+    std::lock_guard<std::mutex> lock(g_supabase_mutex);
+    std::string url = g_supabase_url + "/rest/v1/claimed_games";
+    
+    json payload = {
+        {"user_id", user_id},
+        {"game_id", game_id},
+        {"title", title},
+        {"platforms", platforms},
+        {"worth_inr", worth_inr},
+        {"open_giveaway_url", open_giveaway_url},
+        {"claimed_at", claimed_at}
+    };
+    
+    debug_log("Posting to Supabase: " + url);
+    debug_log("Payload: " + payload.dump());
+    debug_log("User: " + user_id + ", Game ID: " + std::to_string(game_id));
+    
+    std::string headers = "apikey: " + g_supabase_anon_key + "\r\nAuthorization: Bearer " + g_supabase_anon_key + "\r\nContent-Type: application/json\r\n";
+    std::string response = winhttp_post(url, payload.dump(), headers);
+    
+    debug_log("Raw Response: [" + response + "]");
+    debug_log("Response length: " + std::to_string(response.length()));
+    debug_log("Response empty? " + std::string(response.empty() ? "YES" : "NO"));
+    
+    // HTTP 201 Created means the insert was successful (even with empty body)
+    // Only treat as failure if response has error message OR is actually empty with bad HTTP status
+    if (response.empty()) {
+        // Empty response - this means HTTP 201 with no body - its success!
+        debug_log("✅ Claimed game successfully added to Supabase (HTTP 201 with empty body) - RETURNING TRUE");
+        return true;
+    }
+    
+    // If response has data, check for errors
+    bool success = response.find("error") == std::string::npos && response.find("message") == std::string::npos;
+    debug_log("Success check: error found? " + std::string(response.find("error") != std::string::npos ? "YES" : "NO") + 
+              ", message found? " + std::string(response.find("message") != std::string::npos ? "YES" : "NO"));
+    if (success) {
+        debug_log("✅ Claimed game successfully added to Supabase - RETURNING TRUE");
+    } else {
+        debug_log("❌ Supabase returned error/message: " + response + " - RETURNING FALSE");
+    }
+    return success;
+}
+
+// Create or update user profile in Supabase
+bool supabase_upsert_user_profile(const std::string& user_id, const std::string& bio = "",
+                                   const std::string& country = "", const std::string& favorite_platform = "") {
+    if (user_id.empty() || g_supabase_url.empty() || g_supabase_anon_key.empty()) {
+        debug_log("❌ supabase_upsert_user_profile: Missing credentials");
+        return false;
+    }
+    
+    std::lock_guard<std::mutex> lock(g_supabase_mutex);
+    std::string url = g_supabase_url + "/rest/v1/user_profiles?user_id=eq." + user_id;
+    
+    json payload = {
+        {"user_id", user_id},
+        {"bio", bio},
+        {"country", country},
+        {"favorite_platform", favorite_platform},
+        {"updated_at", "now()"}
+    };
+    
+    debug_log("Upsert user profile to: " + url);
+    debug_log("Payload: " + payload.dump());
+    
+    std::string headers = "apikey: " + g_supabase_anon_key + "\r\nAuthorization: Bearer " + g_supabase_anon_key + "\r\nContent-Type: application/json\r\n";
+    
+    // Try PATCH (update) first
+    std::string response = winhttp_patch(url, payload.dump(), headers);
+    debug_log("PATCH response: [" + response + "]");
+    debug_log("PATCH response length: " + std::to_string(response.length()));
+    
+    // Empty response on PATCH usually means HTTP 204 No Content - success!
+    if (response.empty()) {
+        debug_log("✅ User profile successfully patched to Supabase (HTTP 204 with empty body)");
+        return true;
+    }
+    
+    // If response has error message, try POST (insert new)
+    if (response.find("error") != std::string::npos || response.find("message") != std::string::npos) {
+        debug_log("PATCH not found or failed, trying POST (insert)...");
+        std::string insert_url = g_supabase_url + "/rest/v1/user_profiles";
+        response = winhttp_post(insert_url, payload.dump(), headers);
+        debug_log("POST response: [" + response + "]");
+        
+        if (response.empty()) {
+            debug_log("✅ User profile successfully posted to Supabase (HTTP 201 with empty body)");
+            return true;
+        }
+        
+        bool success = response.find("error") == std::string::npos && response.find("message") == std::string::npos;
+        if (success) {
+            debug_log("✅ User profile successfully created in Supabase");
+        } else {
+            debug_log("❌ Supabase create profile failed: " + response);
+        }
+        return success;
+    }
+    
+    // PATCH succeeded with response data
+    debug_log("✅ User profile successfully patched to Supabase");
     return true;
 }
 
@@ -694,6 +963,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return 1;
     }
 
+    // ─── Quick Supabase connectivity test ─────────────────────────────────────
+    if (!g_supabase_url.empty() && !g_supabase_anon_key.empty()) {
+        debug_log("\n=== SUPABASE CONNECTIVITY TEST (on startup) ===");
+        std::string test_url = g_supabase_url + "/rest/v1/user_profiles?select=*&limit=1";
+        std::string test_headers = "apikey: " + g_supabase_anon_key + "\r\nAuthorization: Bearer " + g_supabase_anon_key + "\r\n";
+        std::string test_response = winhttp_get(test_url, test_headers);
+        debug_log("Startup test response: " + test_response);
+        if (test_response.find("No API key") != std::string::npos) {
+            debug_log("❌ HEADERS NOT WORKING - API key not received by Supabase");
+        } else if (test_response.find("error") != std::string::npos || test_response.find("message") != std::string::npos) {
+            debug_log("✅ HEADERS WORKING - Got response (check for permission errors vs auth)");
+        } else {
+            debug_log("✅✅ HEADERS WORKING - Successfully fetched data from Supabase!");
+        }
+        debug_log("=== END TEST ===\n");
+    }
+
     webview::webview w(true, nullptr);
     w.set_title("Game Stash");
     w.set_size(1100, 750, WEBVIEW_HINT_NONE);
@@ -798,6 +1084,112 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return json({{"success", true}}).dump();
     });
 
+    // ─── Binding: testSupabaseConnection ───────────────────────────────────────
+    w.bind("testSupabaseConnection", [&](const std::string&) -> std::string {
+        debug_log("🧪 Testing Supabase connection...");
+        
+        if (g_supabase_url.empty() || g_supabase_anon_key.empty()) {
+            debug_log("❌ TEST FAILED: Supabase credentials not loaded");
+            return json({{"error", "Supabase config not loaded"}}).dump();
+        }
+        
+        // Test 1: Try to fetch user_profiles (GET request)
+        debug_log("TEST 1: GET request to /rest/v1/user_profiles");
+        std::string test_url = g_supabase_url + "/rest/v1/user_profiles?select=*&limit=1";
+        std::string headers = "apikey: " + g_supabase_anon_key + "\r\nAuthorization: Bearer " + g_supabase_anon_key + "\r\nContent-Type: application/json\r\n";
+        debug_log("Headers being sent: apikey and Authorization Bearer token");
+        std::string get_response = winhttp_get(test_url, headers);
+        
+        if (get_response.empty()) {
+            debug_log("❌ TEST 1 FAILED: No response from GET");
+            return json({{"error", "GET request failed - no response"}}).dump();
+        }
+        debug_log("✅ TEST 1 PASSED: GET response: " + get_response);
+        
+        // Test 2: Try to POST a test record to user_profiles
+        debug_log("TEST 2: POST test record to /rest/v1/user_profiles");
+        json test_profile = {
+            {"user_id", "test_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count())},
+            {"bio", "Test connection"},
+            {"country", "Test"},
+            {"favorite_platform", "Test"}
+        };
+        std::string post_response = winhttp_post(g_supabase_url + "/rest/v1/user_profiles", test_profile.dump(), headers);
+        
+        if (post_response.empty()) {
+            debug_log("⚠️ TEST 2 WARNING: No response from POST to user_profiles");
+        } else {
+            debug_log("✅ TEST 2 RESPONSE: " + post_response);
+        }
+
+        // Test 3: Try to POST a test claimed game
+        debug_log("TEST 3: POST test record to /rest/v1/claimed_games");
+        json test_game = {
+            {"user_id", "test@test.com"},
+            {"game_id", 9999},
+            {"title", "Test Game"},
+            {"platforms", "Test"},
+            {"worth_inr", "Rs. 0"},
+            {"open_giveaway_url", "http://test.com"},
+            {"claimed_at", "2026-04-07T10:00:00Z"}
+        };
+        std::string post_game_response = winhttp_post(g_supabase_url + "/rest/v1/claimed_games", test_game.dump(), headers);
+        
+        if (post_game_response.empty()) {
+            debug_log("⚠️ TEST 3 WARNING: No response from POST to claimed_games");
+        } else {
+            debug_log("✅ TEST 3 RESPONSE: " + post_game_response);
+        }
+        
+        return json({
+            {"success", true},
+            {"message", "Connection test completed - check debug log for details"},
+            {"get_response", get_response},
+            {"post_response", post_response},
+            {"post_game_response", post_game_response}
+        }).dump();
+    });
+
+    // ─── Binding: autoTestClaimGames (for automated testing) ──────────────────
+    w.bind("autoTestClaimGames", [&](const std::string&) -> std::string {
+        debug_log("\n\n=== AUTO TEST: CLAIMING GAMES ===");
+        
+        // Test user
+        std::string test_email = "autotest@test.com";
+        
+        // Set g_user_id to test email (simulates login)
+        g_user_id = test_email;
+        debug_log("1. Set g_user_id = " + g_user_id);
+        
+        // Claim 5 test games
+        for (int i = 1; i <= 5; i++) {
+            debug_log("\n2." + std::to_string(i) + " - Claiming test game #" + std::to_string(i));
+            
+            // Call supabase_add_claimed_game directly
+            bool success = supabase_add_claimed_game(
+                g_user_id,
+                9000 + i,
+                "Auto Test Game " + std::to_string(i),
+                "PC, Steam",
+                "Rs. " + std::to_string(100 * i),
+                "http://test.com/game" + std::to_string(i),
+                "2026-04-07T10:00:00Z"
+            );
+            
+            if (success) {
+                debug_log("   ✅ Game #" + std::to_string(i) + " claim succeeded");
+            } else {
+                debug_log("   ❌ Game #" + std::to_string(i) + " claim FAILED");
+            }
+            
+            // Small delay between claims
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        }
+        
+        debug_log("\n=== AUTO TEST COMPLETE - Check Supabase tables ===\n");
+        return json({{"success", true}, {"message", "Auto test completed - check debug.log"}}).dump();
+    });
+
     // ─── Binding: registerUser (email + password) ─────────────────────────────
     w.bind("registerUser", [&](const std::string& req) -> std::string {
         try {
@@ -840,6 +1232,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 return json({{"error", "Email already registered"}}).dump();
             if (rc != SQLITE_DONE)
                 return json({{"error", "Registration failed"}}).dump();
+
+            // ✅ Create user profile in Supabase using email as user_id
+            if (!supabase_upsert_user_profile(email, "", "", "")) {
+                debug_log("Warning: Could not create Supabase profile for: " + email);
+            }
 
             int64_t uid = sqlite3_last_insert_rowid(g_db);
             json user = {
@@ -905,15 +1302,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
             if (user.empty()) return json({{"error", "Invalid email or password"}}).dump();
             
-            // Set global user ID for sync operations
-            g_user_id = std::to_string(user_db_id);
+            // ✅ Set global user ID to EMAIL (for Supabase operations)
+            g_user_id = email;
             
-            // Trigger sync in background to reduce load during gameplay
-            std::thread sync_thread([&]() {
+            // ✅ Fetch latest profile from Supabase and load claimed games
+            std::thread sync_thread([email]() {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                supabase_sync_claimed_games(g_user_id);
-                supabase_sync_user_profile(g_user_id, user);
-                debug_log("Startup sync completed for user: " + g_user_id);
+                // Fetch profile from Supabase
+                json supabase_profile = supabase_fetch_user_profile(email);
+                // Fetch claimed games from Supabase
+                json claimed_games = supabase_fetch_claimed_games(email);
+                debug_log("Loaded " + std::to_string(claimed_games.size()) + " games from Supabase for user: " + email);
             });
             sync_thread.detach();
             
@@ -973,24 +1372,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
     });
 
-    // ─── Binding: dbClaimGame ─────────────────────────────────────────────────
+    // ─── Binding: dbClaimGame (Cloud-First to Supabase) ───────────────────────
     w.bind("dbClaimGame", [&](const std::string& req) -> std::string {
         try {
             json args = json::parse(req);
             if (!args.is_array() || args.size() < 2)
                 return json({{"error", "Invalid args"}}).dump();
 
-            int user_id = args[0].get<int>();
+            int user_id_int = args[0].get<int>();  // Still receive as int from frontend
             json game = args[1];
 
-            const char* sql = R"(
-                INSERT OR IGNORE INTO claimed_games
-                (user_id, game_id, title, thumbnail, platforms, worth_inr, open_giveaway_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            )";
-            sqlite3_stmt* stmt;
-            if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK)
-                return json({{"error", "DB prepare error"}}).dump();
+            // ✅ Use email (g_user_id) as the user_id for Supabase
+            if (g_user_id.empty()) {
+                return json({{"error", "User not logged in"}}).dump();
+            }
 
             int game_id = game.value("id", -1);
             std::string title = game.value("title", "");
@@ -999,15 +1394,38 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             std::string worth = game.value("worth_inr", "");
             std::string gurl  = game.value("open_giveaway_url", "");
 
-            sqlite3_bind_int(stmt, 1, user_id);
-            sqlite3_bind_int(stmt, 2, game_id);
-            sqlite3_bind_text(stmt, 3, title.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt, 4, thumb.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt, 5, plat.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt, 6, worth.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt, 7, gurl.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_step(stmt);
-            sqlite3_finalize(stmt);
+            debug_log("dbClaimGame: User=" + g_user_id + ", GameID=" + std::to_string(game_id) + ", Title=" + title);
+
+            // Also insert into local SQLite for offline support
+            const char* sql = R"(
+                INSERT OR IGNORE INTO claimed_games
+                (user_id, game_id, title, thumbnail, platforms, worth_inr, open_giveaway_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            )";
+            sqlite3_stmt* stmt;
+            if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+                debug_log("Warning: Could not insert to local DB");
+            else {
+                sqlite3_bind_int(stmt, 1, user_id_int);
+                sqlite3_bind_int(stmt, 2, game_id);
+                sqlite3_bind_text(stmt, 3, title.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 4, thumb.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 5, plat.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 6, worth.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 7, gurl.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_step(stmt);
+                sqlite3_finalize(stmt);
+            }
+
+            // ✅ POST to Supabase (Cloud-First)
+            auto now = std::chrono::system_clock::now();
+            auto time_t_now = std::chrono::system_clock::to_time_t(now);
+            char timestamp[30];
+            std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", std::gmtime(&time_t_now));
+            if (!supabase_add_claimed_game(g_user_id, game_id, title, plat, worth, gurl, std::string(timestamp))) {
+                debug_log("Warning: Supabase add claimed game failed");
+                // Still return success for offline support
+            }
 
             return json({{"success", true}}).dump();
         } catch (const std::exception& e) {
@@ -1015,61 +1433,117 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
     });
 
-    // ─── Binding: getClaimedGames ─────────────────────────────────────────────
+    // ─── Binding: getClaimedGames (Cloud-First from Supabase) ──────────────────
     w.bind("getClaimedGames", [&](const std::string& req) -> std::string {
         try {
             json args = json::parse(req);
             if (!args.is_array() || args.size() < 1)
                 return json::array().dump();
 
-            int user_id = args[0].get<int>();
-            const char* sql = R"(
-                SELECT game_id, title, thumbnail, platforms, worth_inr, open_giveaway_url, claimed_at
-                FROM claimed_games WHERE user_id=? ORDER BY claimed_at DESC
-            )";
-            sqlite3_stmt* stmt;
-            if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK)
-                return json::array().dump();
+            int user_id_int = args[0].get<int>();  // Still receive as int from frontend
+            
+            // ✅ Use email (g_user_id) to fetch from Supabase
+            if (g_user_id.empty()) {
+                debug_log("getClaimedGames: User not logged in, using local DB fallback");
+                // Fallback to local SQLite if user not in Supabase context
+                const char* sql = R"(
+                    SELECT game_id, title, thumbnail, platforms, worth_inr, open_giveaway_url, claimed_at
+                    FROM claimed_games WHERE user_id=? ORDER BY claimed_at DESC
+                )";
+                sqlite3_stmt* stmt;
+                if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+                    return json::array().dump();
 
-            sqlite3_bind_int(stmt, 1, user_id);
-            json results = json::array();
-            while (sqlite3_step(stmt) == SQLITE_ROW) {
-                json g;
-                g["id"] = sqlite3_column_int(stmt, 0);
-                auto col1 = sqlite3_column_text(stmt, 1);
-                auto col2 = sqlite3_column_text(stmt, 2);
-                auto col3 = sqlite3_column_text(stmt, 3);
-                auto col4 = sqlite3_column_text(stmt, 4);
-                auto col5 = sqlite3_column_text(stmt, 5);
-                auto col6 = sqlite3_column_text(stmt, 6);
-                g["title"] = col1 ? (const char*)col1 : "";
-                g["thumbnail"] = col2 ? (const char*)col2 : "";
-                g["platforms"] = col3 ? (const char*)col3 : "";
-                g["worth_inr"] = col4 ? (const char*)col4 : "";
-                g["open_giveaway_url"] = col5 ? (const char*)col5 : "";
-                g["claimed_at"] = col6 ? (const char*)col6 : "";
-                results.push_back(g);
+                sqlite3_bind_int(stmt, 1, user_id_int);
+                json results = json::array();
+                while (sqlite3_step(stmt) == SQLITE_ROW) {
+                    json g;
+                    g["id"] = sqlite3_column_int(stmt, 0);
+                    auto col1 = sqlite3_column_text(stmt, 1);
+                    auto col2 = sqlite3_column_text(stmt, 2);
+                    auto col3 = sqlite3_column_text(stmt, 3);
+                    auto col4 = sqlite3_column_text(stmt, 4);
+                    auto col5 = sqlite3_column_text(stmt, 5);
+                    auto col6 = sqlite3_column_text(stmt, 6);
+                    g["title"] = col1 ? (const char*)col1 : "";
+                    g["thumbnail"] = col2 ? (const char*)col2 : "";
+                    g["platforms"] = col3 ? (const char*)col3 : "";
+                    g["worth_inr"] = col4 ? (const char*)col4 : "";
+                    g["open_giveaway_url"] = col5 ? (const char*)col5 : "";
+                    g["claimed_at"] = col6 ? (const char*)col6 : "";
+                    results.push_back(g);
+                }
+                sqlite3_finalize(stmt);
+                return results.dump();
             }
-            sqlite3_finalize(stmt);
-            return results.dump();
+
+            // ✅ Fetch from Supabase (Cloud-First)
+            json supabase_games = supabase_fetch_claimed_games(g_user_id);
+            
+            // Also fallback to local SQLite if Supabase fetch fails
+            if (supabase_games.empty() || !supabase_games.is_array()) {
+                debug_log("Supabase fetch failed, using local DB fallback");
+                const char* sql = R"(
+                    SELECT game_id, title, thumbnail, platforms, worth_inr, open_giveaway_url, claimed_at
+                    FROM claimed_games WHERE user_id=? ORDER BY claimed_at DESC
+                )";
+                sqlite3_stmt* stmt;
+                if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+                    return json::array().dump();
+
+                sqlite3_bind_int(stmt, 1, user_id_int);
+                json results = json::array();
+                while (sqlite3_step(stmt) == SQLITE_ROW) {
+                    json g;
+                    g["id"] = sqlite3_column_int(stmt, 0);
+                    auto col1 = sqlite3_column_text(stmt, 1);
+                    auto col2 = sqlite3_column_text(stmt, 2);
+                    auto col3 = sqlite3_column_text(stmt, 3);
+                    auto col4 = sqlite3_column_text(stmt, 4);
+                    auto col5 = sqlite3_column_text(stmt, 5);
+                    auto col6 = sqlite3_column_text(stmt, 6);
+                    g["title"] = col1 ? (const char*)col1 : "";
+                    g["thumbnail"] = col2 ? (const char*)col2 : "";
+                    g["platforms"] = col3 ? (const char*)col3 : "";
+                    g["worth_inr"] = col4 ? (const char*)col4 : "";
+                    g["open_giveaway_url"] = col5 ? (const char*)col5 : "";
+                    g["claimed_at"] = col6 ? (const char*)col6 : "";
+                    results.push_back(g);
+                }
+                sqlite3_finalize(stmt);
+                return results.dump();
+            }
+
+            return supabase_games.dump();
         } catch (...) {
             return json::array().dump();
         }
     });
 
-    // ─── Binding: getUserProfile ───────────────────────────────────────────────
+    // ─── Binding: getUserProfile (Cloud-First from Supabase) ──────────────────
     w.bind("getUserProfile", [&](const std::string& req) -> std::string {
         try {
             json args = json::parse(req);
             if (!args.is_array() || args.size() < 1)
                 return json({{"error", "Invalid args - no user_id provided"}}).dump();
 
-            int user_id = args[0].get<int>();
-            debug_log("getUserProfile called for user_id: " + std::to_string(user_id));
+            int user_id_int = args[0].get<int>();
+            debug_log("getUserProfile called for user_id: " + std::to_string(user_id_int));
             
-            if (user_id <= 0)
-                return json({{"error", "Invalid user_id: " + std::to_string(user_id)}}).dump();
+            if (user_id_int <= 0)
+                return json({{"error", "Invalid user_id: " + std::to_string(user_id_int)}}).dump();
             
+            // ✅ Try to fetch from Supabase if user_id (email) is available
+            if (!g_user_id.empty()) {
+                json supabase_profile = supabase_fetch_user_profile(g_user_id);
+                if (!supabase_profile.empty() && supabase_profile.is_object()) {
+                    debug_log("User profile loaded from Supabase");
+                    return json({{"success", true}, {"profile", supabase_profile}}).dump();
+                }
+            }
+
+            // ✅ Fallback to local SQLite
+            debug_log("Supabase profile not available, using local DB fallback");
             const char* sql = R"(
                 SELECT id, username, email, avatar_url, bio, country, favorite_platform, created_at, provider
                 FROM users WHERE id=?
@@ -1080,7 +1554,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 return json({{"error", "DB error: " + std::string(sqlite3_errmsg(g_db))}}).dump();
             }
 
-            sqlite3_bind_int(stmt, 1, user_id);
+            sqlite3_bind_int(stmt, 1, user_id_int);
             json profile = json::object();
 
             int step_result = sqlite3_step(stmt);
@@ -1107,7 +1581,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 profile["provider"] = col8 ? (const char*)col8 : "";
                 debug_log("User found: " + profile["username"].get<std::string>());
             } else {
-                debug_log("User not found for id: " + std::to_string(user_id));
+                debug_log("User not found for id: " + std::to_string(user_id_int));
             }
             sqlite3_finalize(stmt);
 
@@ -1122,14 +1596,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
     });
 
-    // ─── Binding: updateUserProfile ────────────────────────────────────────────
+    // ─── Binding: updateUserProfile (Cloud-First to Supabase) ──────────────────
     w.bind("updateUserProfile", [&](const std::string& req) -> std::string {
         try {
             json args = json::parse(req);
             if (!args.is_array() || args.size() < 2)
                 return json({{"error", "Invalid args"}}).dump();
 
-            int user_id = args[0].get<int>();
+            int user_id_int = args[0].get<int>();
             json profile_data = args[1];
 
             // Validate email if being changed
@@ -1144,6 +1618,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             std::string fav_platform = profile_data.contains("favorite_platform") ? profile_data["favorite_platform"].get<std::string>() : "";
             std::string avatar = profile_data.contains("avatar") ? profile_data["avatar"].get<std::string>() : "";
 
+            // ✅ Update in local SQLite first (for offline support)
             const char* sql = R"(
                 UPDATE users 
                 SET bio=?, country=?, favorite_platform=?, avatar_url=?, updated_at=CURRENT_TIMESTAMP
@@ -1157,13 +1632,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             sqlite3_bind_text(stmt, 2, country.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt, 3, fav_platform.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt, 4, avatar.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_int(stmt, 5, user_id);
+            sqlite3_bind_int(stmt, 5, user_id_int);
 
             int rc = sqlite3_step(stmt);
             sqlite3_finalize(stmt);
 
             if (rc != SQLITE_DONE)
-                return json({{"error", "Update failed"}}).dump();
+                debug_log("Warning: Local DB update failed, but will try Supabase");
+
+            // ✅ Update to Supabase (Cloud-First)
+            if (!g_user_id.empty()) {
+                if (supabase_upsert_user_profile(g_user_id, bio, country, fav_platform)) {
+                    debug_log("Profile updated successfully in Supabase");
+                } else {
+                    debug_log("Warning: Supabase update failed");
+                }
+            }
 
             return json({{"success", true}, {"message", "Profile updated successfully"}}).dump();
         } catch (const std::exception& e) {

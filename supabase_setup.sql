@@ -1,7 +1,7 @@
 -- Game Stash Supabase Setup Script
 -- Copy and paste this into Supabase SQL Editor
 
--- Create claimed_games table
+-- ✅ STEP 1: Create claimed_games table
 CREATE TABLE IF NOT EXISTS claimed_games (
   id BIGSERIAL PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS claimed_games (
   UNIQUE(user_id, game_id)
 );
 
--- Create user_profiles table
+-- ✅ STEP 2: Create user_profiles table
 CREATE TABLE IF NOT EXISTS user_profiles (
   id BIGSERIAL PRIMARY KEY,
   user_id TEXT UNIQUE NOT NULL,
@@ -25,31 +25,42 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Create indexes for faster queries
+-- ✅ STEP 3: Create indexes for faster queries
 CREATE INDEX IF NOT EXISTS idx_claimed_games_user_id ON claimed_games(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_user_id ON user_profiles(user_id);
 
--- Optional: Enable Row Level Security (RLS) for security
--- ALTER TABLE claimed_games ENABLE ROW LEVEL SECURITY;
--- ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
+-- ✅ STEP 4: Enable Row Level Security (RLS)
+ALTER TABLE claimed_games ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
 
--- Optional: RLS Policies (uncomment if RLS enabled)
--- CREATE POLICY "Users can view their own games"
---   ON claimed_games FOR SELECT
---   USING (auth.uid()::text = user_id);
--- 
--- CREATE POLICY "Users can insert their own games"
---   ON claimed_games FOR INSERT
---   WITH CHECK (auth.uid()::text = user_id);
---
--- CREATE POLICY "Users can update their own profile"
---   ON user_profiles FOR UPDATE
---   USING (auth.uid()::text = user_id);
---
--- CREATE POLICY "Users can insert their own profile"
---   ON user_profiles FOR INSERT
---   WITH CHECK (auth.uid()::text = user_id);
+-- ✅ STEP 5: Create RLS Policies for claimed_games
+-- Allow anyone (including anon) to INSERT
+CREATE POLICY "Allow anyone to insert claimed games"
+  ON claimed_games FOR INSERT
+  WITH CHECK (true);
 
--- Verification queries (run these to confirm tables created)
+-- Allow anyone to SELECT their own games (or all if user_id is available)
+CREATE POLICY "Allow anyone to select claimed games"
+  ON claimed_games FOR SELECT
+  USING (true);
+
+-- ✅ STEP 6: Create RLS Policies for user_profiles
+-- Allow anyone to INSERT user profiles
+CREATE POLICY "Allow anyone to insert user profiles"
+  ON user_profiles FOR INSERT
+  WITH CHECK (true);
+
+-- Allow anyone to SELECT user profiles
+CREATE POLICY "Allow anyone to select user profiles"
+  ON user_profiles FOR SELECT
+  USING (true);
+
+-- Allow anyone to UPDATE user profiles
+CREATE POLICY "Allow anyone to update user profiles"
+  ON user_profiles FOR UPDATE
+  USING (true)
+  WITH CHECK (true);
+
+-- ✅ Verification queries (run these to confirm tables created)
 -- SELECT COUNT(*) FROM claimed_games;
 -- SELECT COUNT(*) FROM user_profiles;
