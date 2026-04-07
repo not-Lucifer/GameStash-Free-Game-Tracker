@@ -4,6 +4,15 @@ project(GameStash CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# ─── CRITICAL: STATIC LINK C++ RUNTIME ───
+# This MUST be set BEFORE any targets are created
+# Ensures NO external MSVCP*.dll or VCRUNTIME*.dll dependencies
+if (MSVC)
+    # For Release: MultiThreaded (static, no DLL)
+    # For Debug: MultiThreadedDebug (static, no DLL)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 # Dependencies via vcpkg
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
@@ -16,14 +25,10 @@ set(ZSERGE_WEBVIEW_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/installed/x64
 # Create GUI application (no console window)
 add_executable(GameStash WIN32 main.cpp)
 
-# ─── STATIC LINK C++ RUNTIME (compatibility with older Windows 10) ───
-# This embeds the C++ runtime inside the executable instead of requiring DLLs
+# Hide console window
 if (MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     set_target_properties(GameStash PROPERTIES LINK_FLAGS "/SUBSYSTEM:WINDOWS")
 endif()
-
-# Hide console window (alternative approach - not needed with WIN32 flag, but kept for compatibility)
 
 target_include_directories(GameStash PRIVATE ${ZSERGE_WEBVIEW_INCLUDE_DIRS})
 
