@@ -16,10 +16,14 @@ set(ZSERGE_WEBVIEW_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/installed/x64
 # Create GUI application (no console window)
 add_executable(GameStash WIN32 main.cpp)
 
-# Hide console window (alternative approach - not needed with WIN32 flag, but kept for compatibility)
+# ─── STATIC LINK C++ RUNTIME (compatibility with older Windows 10) ───
+# This embeds the C++ runtime inside the executable instead of requiring DLLs
 if (MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     set_target_properties(GameStash PROPERTIES LINK_FLAGS "/SUBSYSTEM:WINDOWS")
 endif()
+
+# Hide console window (alternative approach - not needed with WIN32 flag, but kept for compatibility)
 
 target_include_directories(GameStash PRIVATE ${ZSERGE_WEBVIEW_INCLUDE_DIRS})
 
