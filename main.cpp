@@ -46,7 +46,7 @@ json g_oauth_config;
 // ─── Supabase Configuration ───────────────────────────────────────────────────
 // Replace with your Supabase project URL and anon key
 const std::string SUPABASE_URL = "https://dzhsobheihoickgvwyqt.supabase.co";
-const std::string SUPABASE_ANON_KEY = "sb_anon_eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9";
+const std::string SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR6aHNvYmhlaWhvaWNrZ3Z3eXF0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0ODcyMTksImV4cCI6MjA5MTA2MzIxOX0.mrOw39fXCR2M02lnLa1xjWdN1SMWB_WUOpOYWeXTsLQ";
 const std::string SUPABASE_API_VERSION = "2024-01-01";
 std::string g_user_id = "";  // Set after login
 std::mutex g_supabase_mutex;
