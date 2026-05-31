@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Game Stash</title>
     <link rel="stylesheet" href="style.css?v=3">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <script>
@@ -13,15 +13,6 @@
         window.addEventListener('error', (event) => {
             const error = `JS Error: ${event.message} at ${event.filename}:${event.lineno}:${event.colno}`;
             console.error(error);
-            // Try to log to backend if invokable is available
-            if (window.invokableFunctionExists && typeof window.invokableFunctionExists === 'function') {
-                try {
-                    window.invokableFunctionExists('jsErrorLog', [error]);
-                } catch (e) {
-                    // Fallback if invokable doesn't work
-                    console.log("Could not send error to backend:", e);
-                }
-            }
         });
 
         // Handle unhandled promise rejections
@@ -69,7 +60,6 @@
                         <div class="profile-avatar" id="profile-avatar">G</div>
                         <div class="profile-details">
                             <span class="profile-name" id="profile-name">Guest</span>
-                            <span class="profile-provider" id="profile-provider">Guest</span>
                         </div>
                         <svg class="profile-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
                     </div>
@@ -122,7 +112,7 @@
                 <div class="games-grid" id="games-grid">
                     <div class="loader-container">
                         <div class="spinner"></div>
-                        <p>Syncing live database...</p>
+                        <p>Loading free games...</p>
                     </div>
                 </div>
             </div>
@@ -242,7 +232,6 @@
                         <div class="large-avatar" id="profile-large-avatar">G</div>
                         <div class="profile-basic">
                             <div><strong>Username:</strong> <span id="profile-username-display"></span></div>
-                            <div><strong>Provider:</strong> <span id="profile-provider-display"></span></div>
                             <div><strong>Joined:</strong> <span id="profile-joined-display"></span></div>
                         </div>
                     </div>
@@ -538,7 +527,6 @@
             }
             avatarEl.style.background = currentUser.color || '#00d8ff';
             document.getElementById('profile-name').textContent = currentUser.name;
-            document.getElementById('profile-provider').textContent = 'via ' + currentUser.provider;
             document.getElementById('nav-library').style.display = 'flex';
             updateLibraryCount();
 
@@ -609,7 +597,6 @@
                 // Display profile info
                 document.getElementById('profile-email-display').textContent = profile.email || '';
                 document.getElementById('profile-username-display').textContent = profile.username || '';
-                document.getElementById('profile-provider-display').textContent = profile.provider || 'local';
                 
                 const joinDate = new Date(profile.created_at);
                 document.getElementById('profile-joined-display').textContent = joinDate.toLocaleDateString();
@@ -784,14 +771,14 @@
                     </p>
                     <div class="claim-modal-buttons">
                         <button class="btn-cancel" onclick="this.closest('.claim-modal').remove(); pendingGameClaim=null;">Cancel</button>
-                        <button class="btn-proceed" onclick="proceedToStore('${game.open_giveaway_url}', '${game.title}')">Open Store</button>
+                        <button class="btn-proceed" onclick="proceedToStore('${game.open_giveaway_url}', '${platforms}', '${game.title}')">Open Store</button>
                     </div>
                 </div>
             `;
             document.body.appendChild(modal);
         }
 
-        async function proceedToStore(url, title) {
+        async function proceedToStore(url, platforms, title) {
             // Close the confirmation modal
             document.querySelector('.claim-modal')?.remove();
             
@@ -805,7 +792,7 @@
             _onExternalSite = false;
             
             if (typeof openSystemBrowser !== 'undefined') {
-                openSystemBrowser(url);
+                openSystemBrowser(url, platforms || '');
             } else {
                 showToast('Opening fallback browser...');
                 window.open(url, '_blank');
