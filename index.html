@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Game Stash</title>
     <link rel="stylesheet" href="style.css?v=3">
-    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Sora:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
     <script>
@@ -215,75 +215,72 @@
     <!-- Profile Modal -->
     <div id="profile-modal" class="profile-modal hidden">
         <div class="profile-modal-backdrop" onclick="closeProfileModal()"></div>
-        <div class="profile-modal-content">
+        <div class="profile-modal-content profile-social">
             <button class="profile-close-btn" onclick="closeProfileModal()">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
             </button>
-            
-            <div class="profile-modal-header">
-                <h2>My Profile</h2>
-                <p id="profile-email-display"></p>
+
+            <div class="profile-cover">
+                <div class="profile-cover-overlay"></div>
+                <div class="profile-cover-text">
+                    <h2>Player Profile</h2>
+                    <p id="profile-email-display"></p>
+                </div>
             </div>
 
-            <div class="profile-content">
-                <!-- Profile Info Section -->
-                <div class="profile-section">
-                    <div class="profile-header-info">
-                        <div class="large-avatar" id="profile-large-avatar">G</div>
-                        <div class="profile-basic">
-                            <div><strong>Username:</strong> <span id="profile-username-display"></span></div>
-                            <div><strong>Joined:</strong> <span id="profile-joined-display"></span></div>
+            <div class="profile-body">
+                <div class="profile-identity">
+                    <div class="profile-avatar-lg" id="profile-large-avatar">G</div>
+                    <div class="profile-identity-text">
+                        <div class="profile-name-row">
+                            <span class="profile-display-name" id="profile-username-display"></span>
+                            <span class="profile-joined">Joined <span id="profile-joined-display"></span></span>
+                        </div>
+                        <div class="profile-tagline">Collector of free gems</div>
+                    </div>
+                </div>
+
+                <div class="profile-stats-row">
+                    <div class="profile-stat">
+                        <span id="stat-games-claimed">0</span>
+                        <label>Claimed</label>
+                    </div>
+                    <div class="profile-stat">
+                        <span id="stat-total-worth">Rs. 0</span>
+                        <label>Total Worth</label>
+                    </div>
+                </div>
+
+                <div class="profile-panels">
+                    <div class="profile-panel">
+                        <h3>Bio</h3>
+                        <textarea id="profile-bio" placeholder="Tell us about yourself" maxlength="200" rows="4"></textarea>
+                        <div class="profile-input-meta" id="bio-char-count">0/200</div>
+                    </div>
+                    <div class="profile-panel">
+                        <h3>Details</h3>
+                        <div class="profile-field">
+                            <label>Country</label>
+                            <input type="text" id="profile-country" placeholder="e.g., India" maxlength="50">
+                        </div>
+                        <div class="profile-field">
+                            <label>Favorite Platform</label>
+                            <select id="profile-favorite-platform">
+                                <option value="">Select...</option>
+                                <option value="Steam">Steam</option>
+                                <option value="Epic Games">Epic Games</option>
+                                <option value="GOG">GOG</option>
+                                <option value="Itch.io">Itch.io</option>
+                            </select>
                         </div>
                     </div>
                 </div>
 
-                <!-- Edit Profile Section -->
-                <div class="profile-section">
-                    <h3>Customize Profile</h3>
-                    <div class="profile-form">
-                        <div class="form-group">
-                            <label>Bio</label>
-                            <textarea id="profile-bio" placeholder="Tell us about yourself" maxlength="200" rows="3"></textarea>
-                            <small id="bio-char-count">0/200</small>
-                        </div>
-
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Country</label>
-                                <input type="text" id="profile-country" placeholder="e.g., India" maxlength="50">
-                            </div>
-                            <div class="form-group">
-                                <label>Favorite Platform</label>
-                                <select id="profile-favorite-platform">
-                                    <option value="">Select...</option>
-                                    <option value="Steam">Steam</option>
-                                    <option value="Epic Games">Epic Games</option>
-                                    <option value="GOG">GOG</option>
-                                    <option value="Itch.io">Itch.io</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <button class="save-profile-btn" onclick="saveProfileChanges()">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-                            Save Changes
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Stats Section -->
-                <div class="profile-section">
-                    <h3>Statistics</h3>
-                    <div class="stats-grid">
-                        <div class="stat-card">
-                            <div class="stat-value" id="stat-games-claimed">0</div>
-                            <div class="stat-name">Games Claimed</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value" id="stat-total-worth">$0</div>
-                            <div class="stat-name">Total Worth</div>
-                        </div>
-                    </div>
+                <div class="profile-footer">
+                    <button class="save-profile-btn" onclick="saveProfileChanges()">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                        Save Changes
+                    </button>
                 </div>
             </div>
         </div>
