@@ -28,10 +28,22 @@ using json = nlohmann::json;
 #include <sqlite3.h>
 
 // Debug logging
-std::ofstream g_debug_log("debug.log", std::ios::app);
+std::ofstream g_debug_log;
+void init_debug_log(const std::string& dir) {
+    if (g_debug_log.is_open()) {
+        return;
+    }
+    g_debug_log.open(dir + "\\debug.log", std::ios::app);
+    if (!g_debug_log.is_open()) {
+        g_debug_log.open("debug.log", std::ios::app);
+    }
+}
+
 void debug_log(const std::string& msg) {
-    g_debug_log << "[" << std::chrono::system_clock::now().time_since_epoch().count() << "] " << msg << std::endl;
-    g_debug_log.flush();
+    if (g_debug_log.is_open()) {
+        g_debug_log << "[" << std::chrono::system_clock::now().time_since_epoch().count() << "] " << msg << std::endl;
+        g_debug_log.flush();
+    }
     std::cerr << msg << std::endl;
 }
 
@@ -203,6 +215,14 @@ bool db_init() {
 bool file_exists(const std::string& path) {
     std::ifstream f(path);
     return f.good();
+}
+
+// ─── String helpers ───────────────────────────────────────────────────────────
+bool ends_with(const std::string& value, const std::string& suffix) {
+    if (suffix.size() > value.size()) {
+        return false;
+    }
+    return std::equal(suffix.rbegin(), suffix.rend(), value.rbegin());
 }
 
 // ─── Protocol and App Launch Helpers ─────────────────────────────────────────
@@ -603,14 +623,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return 1;
     }
     
-    debug_log("App Directory: " + g_app_dir);
-    
     // Determine the resource directory
-    // If running from build folder during development, use parent directory for resources
+    // If running from a build folder during development, use parent directory for resources
     g_resource_dir = g_app_dir;
-    if (file_exists(g_app_dir + "\\..\\index.html")) {
-        // Running from build folder - use parent directory
+    if (file_exists(g_app_dir + "\\..\\CMakeLists.txt") &&
+        (ends_with(g_app_dir, "\\build") ||
+         ends_with(g_app_dir, "\\build\\Release") ||
+         ends_with(g_app_dir, "\\build\\Debug"))) {
         g_resource_dir = g_app_dir + "\\..";
+    }
+
+    init_debug_log(g_resource_dir);
+    debug_log("App Directory: " + g_app_dir);
+    if (g_resource_dir != g_app_dir) {
         debug_log("Development mode detected - using parent directory for resources");
     }
     
