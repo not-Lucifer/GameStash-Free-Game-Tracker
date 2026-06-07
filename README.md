@@ -1,25 +1,22 @@
 # 🎮 Game Stash - Free Game Tracker
 
-A lightweight Windows desktop app to track your claimed free games across multiple platforms with **Supabase cloud sync**. Never lose track of your game library again!
+A lightweight Windows desktop app to track your claimed free games across multiple platforms. Never lose track of your game library again!
 
 ## ✨ Features
 
 - 🎯 **Track Claimed Games** - Add games you've claimed from Epic, Steam, GOG, etc.
-- ☁️ **Cloud Sync** - Automatic Supabase synchronization across devices
 - 👤 **User Profiles** - Customize your profile with bio and favorite platform
 - 📱 **Multi-Device** - Access your game library from any device
 - 💾 **Offline Mode** - Local SQLite database fallback when offline
-- 🔐 **Secure** - Authentication via Supabase
+- 🔐 **Secure** - Authentication support
 
 ## 🚀 Quick Start
 
 ### Download Latest Release
-1. Go to **[Releases](../../releases)**
-2. Download `GameStash_v1.0.0.zip`
-3. Extract the ZIP file
-4. Run `GameStash.exe`
-5. Sign up with your email
-6. Start tracking games!
+1. Download the latest release ZIP from the repository **Releases** page, or build a distribution locally with `.\build_dist.bat` and find the ZIP under `dist/`.
+2. Extract the ZIP
+3. Run `GameStash.exe`
+4. Sign up or configure authentication and start tracking games
 
 ### Build from Source
 
@@ -29,68 +26,68 @@ A lightweight Windows desktop app to track your claimed free games across multip
 - Visual Studio 2022 (with C++ tools)
 - vcpkg (included in repo)
 
-**Build:**
-```bash
-cd FreeGameTracekr
-.\build_release.bat
+**Build (from repository root):**
+```powershell
+.\build.bat
 ```
 
-Output: `build\Release\GameStash.exe`
+Output: `build\GameStash.exe`
 
 ## 📋 System Requirements
 
 - **OS:** Windows 10 or later
 - **RAM:** 50 MB minimum
 - **Storage:** 100 MB (including database)
-- **Internet:** Required for cloud sync (optional for offline use)
+- **Internet:** Optional (only required for external services)
 
 ## 🔧 Technologies
 
 - **Frontend:** WebView2 (Chromium-based)
 - **Backend:** C++ with WinHTTP
-- **Database:** 
-  - Cloud: PostgreSQL (Supabase)
+- **Database:**
   - Local: SQLite3
 - **Dependencies:** nlohmann/json, Brotli compression
 
 ## 📁 Project Structure
 
 ```
-FreeGameTracekr/
+FreeGameTracker/
+├── .git/                 # Git repo metadata
+├── build/                # Build artifacts (generated)
+├── dist/                 # Distribution packages
+├── vcpkg/                # vcpkg submodule / packages
+├── ZIP_TEST_EXTRACT/     # Sample ZIP extraction
 ├── main.cpp              # Main application logic
 ├── main_cli.cpp          # CLI variant
 ├── index.html            # WebView UI
 ├── style.css             # UI styling
-├── supabase_setup.sql    # Database schema
-├── supabase_config.json  # Configuration
 ├── CMakeLists.txt        # Build configuration
-└── build/                # Build artifacts (generated)
+├── build.bat             # Build script (release)
+├── build_dist.bat        # Build distribution script
+├── run_out.txt           # Last run output
+├── debug.log             # Debug log
+├── gamestash.db          # Local SQLite database (example)
+├── GameStash_v1.0.0.zip  # Packaged release (example)
+├── oauth_config.json     # OAuth config (example)
+├── oauth_config.json.example
+├── supabase_setup.sql    # Optional: Supabase DB schema (optional)
+├── supabase_config.json  # Optional: Supabase config (optional)
+└── README.md             # Project README
 ```
 
 ## 🛠️ Configuration
 
-### Supabase Setup
+This project includes a few example configuration and helper files. Remove or update them if you're not using the corresponding services.
 
-1. Create a [Supabase](https://supabase.com) account
-2. Create a new project
-3. Run `supabase_setup.sql` in SQL Editor to create tables:
-   - `claimed_games` - Game library tracking
-   - `user_profiles` - User information
+- `oauth_config.json` / `oauth_config.json.example`: OAuth settings for third-party auth providers.
+- `supabase_setup.sql` and `supabase_config.json`: Optional Supabase database schema and configuration (remove if unused).
 
-4. Update `supabase_config.json`:
-```json
-{
-  "supabase": {
-    "url": "https://your-project.supabase.co",
-    "anon_key": "your-anon-key"
-  }
-}
-```
+Adjust any local paths or service credentials before building or running the app.
 
 ## 💾 Data Storage
 
 - **Windows User Profile:** `%APPDATA%\GameStash\gamestash.db`
-- **Cloud:** Supabase PostgreSQL database
+<!-- Cloud sync removed; local storage only -->
 
 ## 🐛 Troubleshooting
 
@@ -100,12 +97,11 @@ FreeGameTracekr/
 
 ### Data not syncing
 - Check internet connection
-- Verify Supabase credentials in `supabase_config.json`
+- Verify local configuration and credentials (if using external services)
 - Check `debug.log` for error details
 
 ### Can't create account
 - Use a valid email address
-- Ensure Supabase project exists
 
 ## 📝 License
 
@@ -120,7 +116,7 @@ Contributions are welcome! Feel free to:
 
 ## 📧 Support
 
-For issues and questions, please open an [Issue](../../issues) on GitHub.
+For issues and questions, please open an [Issue](./issues) on GitHub.
 
 ---
 
