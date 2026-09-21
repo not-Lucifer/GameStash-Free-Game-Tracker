@@ -6,8 +6,8 @@
     <title>Game Stash</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=4">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
     <script>
@@ -22,6 +22,7 @@
         <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></symbol>
         <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
         <symbol id="i-out" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></symbol>
         <symbol id="i-google" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></symbol>
         <symbol id="i-discord" viewBox="0 0 24 24" fill="#5865F2"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></symbol>
     </svg>
@@ -43,14 +44,14 @@
                 <svg><use href="#i-refresh"/></svg>
             </button>
             <div class="account">
-                <button class="btn btn-brass" id="signin-btn" onclick="openLoginModal()">Sign in</button>
+                <button class="btn btn-blue" id="signin-btn" onclick="openLoginModal()">Sign in</button>
                 <div id="account-signed-in" hidden>
                     <button class="account-btn" id="account-btn" onclick="toggleProfileMenu()" aria-haspopup="menu" aria-expanded="false">
                         <span class="avatar" id="profile-avatar" aria-hidden="true">G</span>
                         <span id="profile-name">Guest</span>
                     </button>
                     <div class="menu" id="profile-menu" role="menu" hidden>
-                        <button class="menu-item" role="menuitem" onclick="openProfileModal()"><svg><use href="#i-user"/></svg>My card</button>
+                        <button class="menu-item" role="menuitem" onclick="openProfile()"><svg><use href="#i-user"/></svg>Profile</button>
                         <button class="menu-item" role="menuitem" onclick="signOut()"><svg><use href="#i-out"/></svg>Sign out</button>
                     </div>
                 </div>
@@ -79,16 +80,82 @@
                 </div>
             </div>
 
-            <div class="ticket-grid" id="games-grid" aria-live="polite"></div>
+            <div class="tile-grid" id="games-grid" aria-live="polite"></div>
         </section>
 
         <!-- The stash: what you've claimed -->
         <section id="library-view" class="view" aria-labelledby="nav-library" hidden>
-            <header class="stash-head">
+            <header class="page-head">
                 <h1>My stash</h1>
-                <p class="stash-summary" id="stash-summary"></p>
+                <p class="page-summary" id="stash-summary"></p>
             </header>
-            <div class="ticket-grid" id="library-grid"></div>
+            <div class="tile-grid" id="library-grid"></div>
+        </section>
+
+        <!-- Profile -->
+        <section id="profile-view" class="view" aria-labelledby="profile-title" hidden>
+            <header class="profile-head">
+                <span class="avatar avatar-xl" id="profile-large-avatar" aria-hidden="true">G</span>
+                <div class="profile-id">
+                    <h1 class="profile-name" id="profile-title"></h1>
+                    <ul class="profile-meta" id="profile-meta"></ul>
+                </div>
+                <div class="profile-head-actions">
+                    <button class="btn btn-quiet" onclick="switchView('library')">Open my stash</button>
+                    <button class="btn btn-quiet" onclick="signOut()">Sign out</button>
+                </div>
+            </header>
+
+            <div class="profile-grid">
+                <div class="profile-main">
+                    <div class="figures">
+                        <div class="figure"><b id="stat-games-claimed">0</b><span>games stashed</span></div>
+                        <div class="figure"><b id="stat-total-worth">Rs. 0</b><span>saved at list price</span></div>
+                        <div class="figure"><b id="stat-this-month">0</b><span>stashed this month</span></div>
+                        <div class="figure"><b id="stat-top-store">None yet</b><span>most stashed from</span></div>
+                    </div>
+
+                    <section class="profile-block">
+                        <h2>Where your stash comes from</h2>
+                        <div class="store-bars" id="store-bars"></div>
+                    </section>
+
+                    <section class="profile-block">
+                        <div class="block-head">
+                            <h2>Recently stashed</h2>
+                            <button class="link-btn" id="recent-see-all" onclick="switchView('library')">See all</button>
+                        </div>
+                        <div class="recent-row" id="recent-row"></div>
+                    </section>
+                </div>
+
+                <form class="profile-form panel" onsubmit="saveProfileChanges(); return false;">
+                    <h2>About you</h2>
+                    <p class="panel-lede">Shown only here, on this PC.</p>
+                    <div class="field">
+                        <label for="profile-bio">Bio</label>
+                        <textarea id="profile-bio" maxlength="200" rows="3" placeholder="What do you play?"></textarea>
+                        <span class="field-hint" id="bio-char-count">0/200</span>
+                    </div>
+                    <div class="field-row">
+                        <div class="field"><label for="profile-country">Country</label><input type="text" id="profile-country" maxlength="50" placeholder="Where you play from"></div>
+                        <div class="field">
+                            <label for="profile-favorite-platform">Favourite store</label>
+                            <select id="profile-favorite-platform">
+                                <option value="">Choose one</option>
+                                <option value="Steam">Steam</option>
+                                <option value="Epic Games">Epic Games</option>
+                                <option value="GOG">GOG</option>
+                                <option value="Itch.io">Itch.io</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-actions-row">
+                        <span class="save-state" id="profile-save-state"></span>
+                        <button type="submit" class="btn btn-blue" id="btn-save-profile">Save changes</button>
+                    </div>
+                </form>
+            </div>
         </section>
     </main>
 
@@ -113,60 +180,17 @@
                 <div class="divider">or with email</div>
                 <div class="field"><label for="login-email">Email</label><input type="email" id="login-email" autocomplete="email" required></div>
                 <div class="field"><label for="login-password">Password</label><input type="password" id="login-password" autocomplete="current-password" required></div>
-                <div class="form-actions"><button type="submit" class="btn btn-ink btn-block btn-lg" id="btn-email-login">Sign in</button></div>
+                <div class="form-actions"><button type="submit" class="btn btn-blue btn-block btn-lg" id="btn-email-login">Sign in</button></div>
             </form>
 
             <form class="auth-form" id="auth-form-register" onsubmit="registerWithEmail(); return false;" hidden>
                 <div class="field"><label for="reg-username">Username</label><input type="text" id="reg-username" maxlength="30" autocomplete="username" required></div>
                 <div class="field"><label for="reg-email">Email</label><input type="email" id="reg-email" autocomplete="email" required></div>
                 <div class="field"><label for="reg-password">Password</label><input type="password" id="reg-password" autocomplete="new-password" minlength="6" required><span class="field-hint">At least 6 characters</span></div>
-                <div class="form-actions"><button type="submit" class="btn btn-ink btn-block btn-lg" id="btn-email-register">Create account</button></div>
+                <div class="form-actions"><button type="submit" class="btn btn-blue btn-block btn-lg" id="btn-email-register">Create account</button></div>
             </form>
 
             <div class="form-error" id="auth-error" role="alert" hidden></div>
-        </div>
-    </div>
-
-    <!-- Profile card -->
-    <div class="modal" id="profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title" hidden>
-        <div class="modal-backdrop" onclick="closeProfileModal()"></div>
-        <div class="modal-card is-wide">
-            <button class="modal-close" onclick="closeProfileModal()" aria-label="Close"><svg><use href="#i-close"/></svg></button>
-            <div class="profile-head">
-                <span class="avatar" id="profile-large-avatar" aria-hidden="true">G</span>
-                <div>
-                    <h2 class="profile-name" id="profile-title"></h2>
-                    <p class="profile-since" id="profile-since"></p>
-                </div>
-            </div>
-            <div class="profile-figures">
-                <div class="figure"><b id="stat-games-claimed">0</b><span>games stashed</span></div>
-                <div class="figure"><b id="stat-total-worth">Rs. 0</b><span>in list prices</span></div>
-            </div>
-            <form class="profile-form" onsubmit="saveProfileChanges(); return false;">
-                <div class="field">
-                    <label for="profile-bio">About you</label>
-                    <textarea id="profile-bio" maxlength="200" rows="3" placeholder="What do you play?"></textarea>
-                    <span class="field-hint" id="bio-char-count">0/200</span>
-                </div>
-                <div class="field-row">
-                    <div class="field"><label for="profile-country">Country</label><input type="text" id="profile-country" maxlength="50"></div>
-                    <div class="field">
-                        <label for="profile-favorite-platform">Favourite store</label>
-                        <select id="profile-favorite-platform">
-                            <option value="">Choose one</option>
-                            <option value="Steam">Steam</option>
-                            <option value="Epic Games">Epic Games</option>
-                            <option value="GOG">GOG</option>
-                            <option value="Itch.io">Itch.io</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="modal-actions">
-                    <button type="button" class="btn btn-quiet" onclick="closeProfileModal()">Cancel</button>
-                    <button type="submit" class="btn btn-brass" id="btn-save-profile">Save changes</button>
-                </div>
-            </form>
         </div>
     </div>
 
@@ -179,7 +203,7 @@
             <p class="modal-lede" id="claim-confirm-lede"></p>
             <div class="modal-actions">
                 <button class="btn btn-quiet" onclick="dismissClaim()">Cancel</button>
-                <button class="btn btn-brass" id="claim-confirm-go" onclick="proceedToStore()">Open store</button>
+                <button class="btn btn-blue" id="claim-confirm-go" onclick="proceedToStore()">Open store</button>
             </div>
         </div>
     </div>
@@ -192,7 +216,7 @@
             <p class="modal-lede" id="claim-verify-lede"></p>
             <div class="modal-actions">
                 <button class="btn btn-quiet" onclick="dismissClaim()">Not yet</button>
-                <button class="btn btn-brass" id="claim-verify-yes" onclick="confirmGameClaimed()">Yes, add to my stash</button>
+                <button class="btn btn-blue" id="claim-verify-yes" onclick="confirmGameClaimed()">Yes, add to my stash</button>
             </div>
         </div>
     </div>
@@ -249,6 +273,16 @@
             if (d === 1) return 'Ends tomorrow, ' + when;
             return 'Ends in ' + d + ' days, on ' + when;
         }
+        // Share of the giveaway window still open, 0..1. Falls back to a two-week window when
+        // the API gives no published date.
+        function timeLeftFraction(game) {
+            const end = parseApiDate(game.end_date);
+            if (!end) return null;
+            const start = parseApiDate(game.published_date) || new Date(end - 14 * DAY_MS);
+            const total = end - start;
+            if (total <= 0) return 1;
+            return Math.max(0.03, Math.min(1, (end - Date.now()) / total));
+        }
         function worthNumber(worth_inr) {
             const m = String(worth_inr || '').match(/\d+(?:\.\d+)?/);
             return m ? parseFloat(m[0]) : 0;
@@ -257,7 +291,7 @@
             const n = worthNumber(worth_inr);
             return n > 0 ? 'Rs. ' + n.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '';
         }
-        // "Deadshot (Steam) Giveaway" -> "Deadshot"; the store is on the ticket already
+        // "Deadshot (Steam) Giveaway" -> "Deadshot"; the store is on the tile already
         function displayTitle(game) {
             return String(game.title || '')
                 .replace(/\s*\((?:Steam|Epic Games?(?: Store)?|GOG|Itch\.io|Indiegala|Fanatical|Amazon(?: Games)?|Prime Gaming|Microsoft Store|Ubisoft)\)/gi, '')
@@ -285,74 +319,84 @@
         let pendingGameClaim = null;   // read by C++ (navigateBack) — keep global
         let openModals = [];
 
-        // ─── Rendering: tickets ─────────────────────────────────────────────
-        function ticketMeta(game, big) {
+        // ─── Rendering: tiles ───────────────────────────────────────────────
+        function tileMeta(game) {
             const was = worthText(game.worth_inr);
             const type = game.type && game.type !== 'Game' ? esc(game.type) : '';
-            return `<p class="ticket-meta">${was ? `<s>${was}</s>` : ''}<span class="free-tag">Free</span>${type ? `<span>${type}</span>` : ''}</p>`;
+            return `<p class="tile-meta"><span class="free">Free</span>${was ? `<s>${was}</s>` : ''}${type ? `<span>${type}</span>` : ''}</p>`;
         }
-        function ticketHTML(game, i) {
+        const claimedChip = '<span class="chip chip-claimed"><svg><use href="#i-check"/></svg>Claimed</span>';
+        function tileHTML(game, i) {
             const store = storeOf(game.platforms);
             const stashed = isGameClaimed(game.id);
             const ends = endsText(game);
             const d = daysLeft(game);
             const action = stashed
                 ? `<button class="btn btn-quiet" data-action="open" data-game-id="${game.id}">Open ${store ? store.label : 'store'}</button>`
-                : `<button class="btn btn-ink" data-action="claim" data-game-id="${game.id}">Claim${store ? ' on ' + store.label : ''}</button>`;
+                : `<button class="btn btn-soft" data-action="claim" data-game-id="${game.id}">Claim${store ? ' on ' + store.label : ''}</button>`;
             return `
-                <article class="ticket${stashed ? ' is-stamped' : ''}" data-game-id="${game.id}" style="--i:${i}">
-                    <div class="ticket-art" style="background-image:url('${esc(game.thumbnail)}')">
-                        <span class="ticket-platform">${esc(chipText(game))}</span>
-                        ${ends ? `<span class="ticket-ends${d !== null && d <= 2 ? ' is-urgent' : ''}">${ends}</span>` : ''}
+                <article class="tile${stashed ? ' is-stashed' : ''}" data-game-id="${game.id}" style="--i:${i}">
+                    <div class="tile-art" style="background-image:url('${esc(game.thumbnail)}')">
+                        <span class="chip chip-store">${esc(chipText(game))}</span>
+                        ${stashed ? claimedChip : ''}
+                        ${ends && !stashed ? `<span class="chip chip-ends${d !== null && d <= 2 ? ' is-urgent' : ''}">${ends}</span>` : ''}
                     </div>
-                    <div class="ticket-tear"></div>
-                    <div class="ticket-body">
-                        ${stashed ? '<span class="stamp">Claimed</span>' : ''}
-                        <h3 class="ticket-title">${esc(displayTitle(game))}</h3>
-                        ${ticketMeta(game)}
-                        <div class="ticket-actions">${action}</div>
+                    <div class="tile-body">
+                        <h3 class="tile-title">${esc(displayTitle(game))}</h3>
+                        ${tileMeta(game)}
+                        <div class="tile-actions">${action}</div>
                     </div>
                 </article>`;
         }
-        function stashTicketHTML(game, i) {
-            const store = storeOf(game.platforms);
+        function stashedOnText(game) {
             const on = new Date(game.claimed_at);
-            const onText = isNaN(on) ? '' : on.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+            return isNaN(on) ? '' : on.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+        }
+        function stashTileHTML(game, i) {
+            const store = storeOf(game.platforms);
+            const onText = stashedOnText(game);
+            const was = worthText(game.worth_inr);
             return `
-                <article class="ticket is-stamped" data-game-id="${game.id}" style="--i:${i}">
-                    <div class="ticket-art" style="background-image:url('${esc(game.thumbnail)}')">
-                        <span class="ticket-platform">${esc(chipText(game))}</span>
+                <article class="tile is-stashed" data-game-id="${game.id}" style="--i:${i}">
+                    <div class="tile-art" style="background-image:url('${esc(game.thumbnail)}')">
+                        <span class="chip chip-store">${esc(chipText(game))}</span>
+                        ${claimedChip}
                     </div>
-                    <div class="ticket-tear"></div>
-                    <div class="ticket-body">
-                        <span class="stamp">Claimed</span>
-                        <h3 class="ticket-title">${esc(displayTitle(game))}</h3>
-                        <p class="stashed-on">${onText ? 'Stashed ' + onText : ''}${worthText(game.worth_inr) ? (onText ? ', list price ' : 'List price ') + worthText(game.worth_inr) : ''}</p>
-                        <div class="ticket-actions"><button class="btn btn-quiet" data-action="open" data-game-id="${game.id}">Open ${store ? store.label : 'store'}</button></div>
+                    <div class="tile-body">
+                        <h3 class="tile-title">${esc(displayTitle(game))}</h3>
+                        <p class="stashed-on">${onText ? 'Stashed ' + onText : ''}${was ? (onText ? ', list price ' : 'List price ') + was : ''}</p>
+                        <div class="tile-actions"><button class="btn btn-quiet" data-action="open" data-game-id="${game.id}">Open ${store ? store.label : 'store'}</button></div>
                     </div>
                 </article>`;
         }
-        function featuredHTML(game) {
+        function spotlightHTML(game) {
             const store = storeOf(game.platforms);
             const stashed = isGameClaimed(game.id);
             const d = daysLeft(game);
-            const why = d !== null ? 'Ending soonest on the table' : 'Newest on the table';
+            const frac = timeLeftFraction(game);
+            const why = d !== null ? 'Ending soonest' : 'Newest on the table';
+            const state = frac === null ? ' is-open' : (d <= 2 ? ' is-urgent' : '');
+            const desc = String(game.description || '').trim();
             const action = stashed
                 ? `<button class="btn btn-quiet btn-lg" data-action="open" data-game-id="${game.id}">Open ${store ? store.label : 'store'}</button>`
-                : `<button class="btn btn-brass btn-lg" data-action="claim" data-game-id="${game.id}">Claim${store ? ' on ' + store.label : ''}</button>`;
+                : `<button class="btn btn-blue btn-lg" data-action="claim" data-game-id="${game.id}">Claim${store ? ' on ' + store.label : ''}</button>`;
             return `
-                <article class="ticket featured" data-game-id="${game.id}">
-                    <div class="featured-art" style="background-image:url('${esc(game.image || game.thumbnail)}')">
-                        <span class="ticket-platform">${esc(chipText(game))}</span>
-                    </div>
-                    <div class="featured-tear"></div>
-                    <div class="featured-body">
-                        ${stashed ? '<span class="stamp">Claimed</span>' : ''}
-                        <p class="featured-why">${why}</p>
-                        <h1 class="featured-title">${esc(displayTitle(game))}</h1>
-                        ${ticketMeta(game, true)}
-                        <p class="featured-ends${d !== null && d <= 2 ? ' is-urgent' : ''}">${endsLong(game)}</p>
-                        <div class="featured-actions">${action}</div>
+                <article class="spotlight" data-game-id="${game.id}">
+                    <div class="spotlight-art" style="background-image:url('${esc(game.image || game.thumbnail)}')"></div>
+                    <div class="spotlight-body">
+                        <div class="spotlight-tags">
+                            <span class="chip chip-store">${esc(chipText(game))}</span>
+                            ${stashed ? claimedChip : ''}
+                        </div>
+                        <p class="spotlight-why">${why}</p>
+                        <h1 class="spotlight-title">${esc(displayTitle(game))}</h1>
+                        ${desc ? `<p class="spotlight-desc">${esc(desc)}</p>` : ''}
+                        ${tileMeta(game)}
+                        <div class="countdown${state}">
+                            <div class="countdown-track"><div class="countdown-fill" style="width:${Math.round((frac ?? 1) * 100)}%"></div></div>
+                            <p class="countdown-text">${endsLong(game)}</p>
+                        </div>
+                        <div class="spotlight-actions">${action}</div>
                     </div>
                 </article>`;
         }
@@ -390,7 +434,7 @@
             if (allGames.length === 0) {
                 featuredEl.innerHTML = '';
                 grid.innerHTML = noteHTML('Nothing on the table right now', 'Try refreshing in a moment, or check your internet connection.',
-                    '<button class="btn btn-chalk" onclick="refreshAllGames()">Refresh</button>');
+                    '<button class="btn btn-quiet" onclick="refreshAllGames()">Refresh</button>');
                 return;
             }
             if (list.length === 0) {
@@ -400,18 +444,18 @@
             }
 
             const featured = pickFeatured(list);
-            featuredEl.innerHTML = featuredHTML(featured);
+            featuredEl.innerHTML = spotlightHTML(featured);
             const rest = list.filter((g) => g !== featured);
             grid.classList.toggle('is-dealing', !!deal);
-            grid.innerHTML = rest.map((g, i) => ticketHTML(g, Math.min(i, 24))).join('');
+            grid.innerHTML = rest.map((g, i) => tileHTML(g, Math.min(i, 24))).join('');
             if (deal) setTimeout(() => grid.classList.remove('is-dealing'), 1500);
         }
         function renderSkeleton() {
             $('featured').innerHTML = '';
             $('games-grid').innerHTML = Array.from({ length: 8 }, () => `
-                <div class="ticket is-skeleton" aria-hidden="true">
-                    <div class="ticket-art"></div><div class="ticket-tear"></div>
-                    <div class="ticket-body"><div class="sk-line"></div><div class="sk-line"></div><div class="sk-btn"></div></div>
+                <div class="tile is-skeleton" aria-hidden="true">
+                    <div class="tile-art"></div>
+                    <div class="tile-body"><div class="sk-line"></div><div class="sk-line"></div><div class="sk-btn"></div></div>
                 </div>`).join('');
         }
 
@@ -426,12 +470,12 @@
 
             if (claimedGames.length === 0) {
                 grid.innerHTML = noteHTML('Nothing stashed yet', 'Claim a game from the table and it will show up here.',
-                    '<button class="btn btn-chalk" onclick="switchView(\'storefront\')">See what’s free</button>');
+                    '<button class="btn btn-quiet" onclick="switchView(\'storefront\')">See what’s free</button>');
                 return;
             }
             const list = claimedGames.filter((g) => !q || (g.title || '').toLowerCase().includes(q));
             grid.innerHTML = list.length
-                ? list.map(stashTicketHTML).join('')
+                ? list.map(stashTileHTML).join('')
                 : noteHTML('No games match', `Nothing in your stash is called “${esc(searchQuery)}”.`);
         }
         function updateLibraryCount() {
@@ -443,14 +487,18 @@
             currentView = view;
             $('storefront-view').hidden = view !== 'storefront';
             $('library-view').hidden = view !== 'library';
+            $('profile-view').hidden = view !== 'profile';
             $('nav-storefront').classList.toggle('is-active', view === 'storefront');
             $('nav-library').classList.toggle('is-active', view === 'library');
             $('search-input').placeholder = view === 'library' ? 'Search your stash' : 'Search the table';
             if (view === 'library') renderLibrary();
+            if (view === 'profile') renderProfileStats();
             window.scrollTo(0, 0);
         }
         function rerender() {
-            if (currentView === 'library') renderLibrary(); else renderTable(false);
+            if (currentView === 'library') renderLibrary();
+            else if (currentView === 'profile') renderProfileStats();
+            else renderTable(false);
         }
 
         // ─── Claim flow ─────────────────────────────────────────────────────
@@ -511,7 +559,7 @@
                     pendingGameClaim = null;
                     closeModal('claim-verify');
                     rerender();
-                    document.querySelectorAll(`.ticket[data-game-id="${game.id}"] .stamp`).forEach((s) => s.classList.add('is-fresh'));
+                    document.querySelectorAll(`[data-game-id="${game.id}"] .chip-claimed`).forEach((s) => s.classList.add('is-fresh'));
                     showToast(displayTitle(game) + ' added to your stash');
                 } else {
                     showToast('Couldn’t add it to your stash. Try again.');
@@ -590,7 +638,7 @@
             $('nav-library').hidden = true;
             $('profile-menu').hidden = true;
             $('account-btn').setAttribute('aria-expanded', 'false');
-            if (currentView === 'library') switchView('storefront');
+            if (currentView !== 'storefront') switchView('storefront');
             updateLibraryCount();
             rerender();
             showToast('Signed out');
@@ -709,45 +757,94 @@
         function openLoginModal() { switchAuthTab('login'); openModal('login-modal', 'login-email'); }
         function closeLoginModal() { closeModal('login-modal'); }
 
-        // ─── Profile card ───────────────────────────────────────────────────
-        async function openProfileModal() {
+        // ─── Profile page ───────────────────────────────────────────────────
+        let profileAvatar = '';   // sent back on save so the C++ update doesn't blank it
+
+        function providerText(provider) {
+            const p = String(provider || '').toLowerCase();
+            if (p === 'google') return 'Signed in with Google';
+            if (p === 'discord') return 'Signed in with Discord';
+            return 'Signed in with email';
+        }
+        async function openProfile() {
             if (!currentUser) { openLoginModal(); return; }
             const userId = currentUser.db_id || currentUser.id;
             $('profile-menu').hidden = true;
             $('account-btn').setAttribute('aria-expanded', 'false');
             try {
                 const data = parseResult(await getUserProfile(userId));
-                if (!data.success) { showToast('Couldn’t load your card: ' + (data.error || 'unknown error')); return; }
+                if (!data.success) { showToast('Couldn’t load your profile: ' + (data.error || 'unknown error')); return; }
                 const p = data.profile || {};
+                profileAvatar = p.avatar || '';
                 $('profile-title').textContent = p.username || currentUser.name;
                 const since = new Date(String(p.created_at || '').replace(' ', 'T'));
-                $('profile-since').innerHTML = [p.email, isNaN(since) ? '' : 'Member since ' + since.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })].filter(Boolean).map(esc).join('<br>');
+                $('profile-meta').innerHTML = [
+                    p.email,
+                    providerText(p.provider || currentUser.provider),
+                    isNaN(since) ? '' : 'Member since ' + since.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }),
+                ].filter(Boolean).map((t) => `<li>${esc(t)}</li>`).join('');
                 setAvatar($('profile-large-avatar'), p.avatar, p.username, currentUser.color);
                 $('profile-bio').value = p.bio || '';
                 $('profile-country').value = p.country || '';
                 $('profile-favorite-platform').value = p.favorite_platform || '';
+                $('profile-save-state').textContent = '';
                 updateBioCharCount();
-                const total = claimedGames.reduce((sum, g) => sum + worthNumber(g.worth_inr), 0);
-                $('stat-games-claimed').textContent = claimedGames.length;
-                $('stat-total-worth').textContent = 'Rs. ' + total.toLocaleString('en-IN', { maximumFractionDigits: 0 });
-                openModal('profile-modal', 'profile-bio');
+                switchView('profile');
             } catch (e) {
-                showToast('Couldn’t load your card: ' + e.message);
+                showToast('Couldn’t load your profile: ' + e.message);
             }
         }
-        function closeProfileModal() { closeModal('profile-modal'); }
+        // Figures, store breakdown and the recent strip all come from the stash in memory.
+        function renderProfileStats() {
+            const total = claimedGames.reduce((sum, g) => sum + worthNumber(g.worth_inr), 0);
+            const now = new Date();
+            const thisMonth = claimedGames.filter((g) => {
+                const d = new Date(g.claimed_at);
+                return !isNaN(d) && d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+            }).length;
+            const byStore = STORES.map((s) => ({ store: s, n: claimedGames.filter((g) => matchesStore(g, s.key)).length })).filter((x) => x.n > 0);
+            byStore.sort((a, b) => b.n - a.n);
+
+            $('stat-games-claimed').textContent = claimedGames.length;
+            $('stat-total-worth').textContent = 'Rs. ' + total.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+            $('stat-this-month').textContent = thisMonth;
+            $('stat-top-store').textContent = byStore.length ? byStore[0].store.label : 'None yet';
+
+            const max = byStore.length ? byStore[0].n : 0;
+            $('store-bars').innerHTML = byStore.length
+                ? byStore.map((x, i) => `
+                    <div class="store-bar${i === 0 ? ' is-top' : ''}">
+                        <span>${esc(x.store.label)}</span>
+                        <div class="store-bar-track"><div class="store-bar-fill" style="width:${Math.round((x.n / max) * 100)}%"></div></div>
+                        <b>${x.n}</b>
+                    </div>`).join('')
+                : '<p class="block-note">Claim a game and the store it came from shows up here.</p>';
+
+            const recent = claimedGames.slice(0, 5);
+            $('recent-see-all').hidden = recent.length === 0;
+            $('recent-row').innerHTML = recent.length
+                ? recent.map((g) => `
+                    <button class="recent" data-action="open" data-game-id="${g.id}" title="Open ${esc(chipText(g))}">
+                        <span class="recent-art" style="background-image:url('${esc(g.thumbnail)}')"></span>
+                        <span class="recent-title">${esc(displayTitle(g))}</span>
+                        <span class="recent-when">${esc(stashedOnText(g) || chipText(g))}</span>
+                    </button>`).join('')
+                : '<p class="block-note">Nothing stashed yet. Claim a game from the table and it will show up here.</p>';
+        }
         function updateBioCharCount() { $('bio-char-count').textContent = $('profile-bio').value.length + '/200'; }
         async function saveProfileChanges() {
             if (!currentUser) return;
             const btn = $('btn-save-profile');
-            btn.disabled = true; btn.textContent = 'Saving…';
+            const state = $('profile-save-state');
+            btn.disabled = true; btn.textContent = 'Saving…'; state.textContent = '';
             try {
                 const res = parseResult(await updateUserProfile(currentUser.db_id, {
                     bio: $('profile-bio').value,
                     country: $('profile-country').value,
                     favorite_platform: $('profile-favorite-platform').value,
+                    avatar: profileAvatar,
                 }));
-                if (res.success) { showToast('Card saved'); closeProfileModal(); }
+                if (res.success) { state.textContent = 'Saved'; showToast('Profile saved'); }
                 else showToast('Couldn’t save: ' + (res.error || 'unknown error'));
             } catch (e) {
                 showToast('Couldn’t save: ' + e.message);
@@ -762,7 +859,7 @@
             openModals.push(id);
             requestAnimationFrame(() => {
                 m.classList.add('is-open');
-                const target = focusId ? $(focusId) : (m.querySelector('.btn-brass') || m.querySelector('.btn-ink') || m.querySelector('input, button'));
+                const target = focusId ? $(focusId) : (m.querySelector('.btn-blue') || m.querySelector('input, button'));
                 if (target) target.focus();
             });
         }
@@ -805,7 +902,7 @@
             } catch (error) {
                 allGames = [];
                 $('featured').innerHTML = '';
-                $('games-grid').innerHTML = `<div class="table-note is-error"><h3>Couldn’t load the table</h3><p>${esc(error.message || 'Something went wrong')}.</p><button class="btn btn-chalk" onclick="refreshAllGames()">Try again</button></div>`;
+                $('games-grid').innerHTML = `<div class="table-note is-error"><h3>Couldn’t load the table</h3><p>${esc(error.message || 'Something went wrong')}.</p><button class="btn btn-quiet" onclick="refreshAllGames()">Try again</button></div>`;
             }
         }
         function refreshAllGames() {
