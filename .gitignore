@@ -37,7 +37,6 @@ vs_path.txt
 
 # Secrets & Configuration (NEVER commit real credentials)
 oauth_config.json
-supabase_config.json
 .env
 .env.local
 gamestash.db

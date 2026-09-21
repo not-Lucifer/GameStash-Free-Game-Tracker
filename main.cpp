@@ -3,13 +3,15 @@
 #include <iomanip>
 #include <sstream>
 #include <fstream>
+#include <cctype>
+#include <cstdint>
 #include <chrono>
-#include <ctime>
 #include <thread>
 #include <atomic>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <vector>
 #include <random>
 #include <webview/webview.h>
 
@@ -41,27 +43,25 @@ void init_debug_log(const std::string& dir) {
 
 void debug_log(const std::string& msg) {
     if (g_debug_log.is_open()) {
-        g_debug_log << "[" << std::chrono::system_clock::now().time_since_epoch().count() << "] " << msg << std::endl;
+        g_debug_log << "[" << std::chrono::system_clock::now().time_since_epoch().count() << "] " << msg << '\n';
         g_debug_log.flush();
     }
-    std::cerr << msg << std::endl;
+    std::cerr << msg << '\n';
 }
 
 // ─── Global State ─────────────────────────────────────────────────────────────
 sqlite3* g_db = nullptr;
 std::string g_app_html_path;
-std::string g_oauth_config_path;
 std::string g_app_dir;
 std::string g_resource_dir;
 std::string g_db_path;
 json g_oauth_config;
 
-// OAuth local server state
+// OAuth local callback server state
 std::atomic<bool> g_oauth_server_running{false};
-std::string g_pending_oauth_provider;
-std::string g_oauth_code;
-std::string g_oauth_state;
-std::mutex g_oauth_mutex;
+std::mutex g_oauth_mutex;               // guards the two fields below
+std::string g_oauth_expected_provider;  // provider of the most recent login attempt
+std::string g_oauth_expected_state;     // CSRF token sent with that attempt
 
 // ─── SHA-256 Password Hashing (Windows CryptoAPI) ─────────────────────────────
 std::string sha256_hex(const std::string& input, const std::string& salt = "") {
@@ -77,7 +77,7 @@ std::string sha256_hex(const std::string& input, const std::string& salt = "") {
         CryptReleaseContext(hProv, 0);
         return "";
     }
-    if (!CryptHashData(hHash, (BYTE*)salted_input.c_str(), (DWORD)salted_input.size(), 0)) {
+    if (!CryptHashData(hHash, reinterpret_cast<const BYTE*>(salted_input.data()), (DWORD)salted_input.size(), 0)) {
         CryptDestroyHash(hHash);
         CryptReleaseContext(hProv, 0);
         return "";
@@ -111,33 +111,33 @@ std::string generate_random_state() {
 bool is_valid_email(const std::string& email) {
     // Basic email validation
     if (email.empty() || email.length() > 254) return false;
-    
+
     size_t at_pos = email.find('@');
     if (at_pos == std::string::npos || at_pos == 0 || at_pos == email.length() - 1)
         return false;
-    
+
     // Check for local part
     std::string local = email.substr(0, at_pos);
     if (local.find("..") != std::string::npos) return false;
-    for (char c : local) {
-        if (!isalnum(c) && c != '.' && c != '_' && c != '-' && c != '+') 
+    for (unsigned char c : local) {
+        if (!std::isalnum(c) && c != '.' && c != '_' && c != '-' && c != '+')
             return false;
     }
-    
+
     // Check for domain part
     std::string domain = email.substr(at_pos + 1);
     if (domain.find("..") != std::string::npos) return false;
     if (domain.find('.') == std::string::npos) return false;
-    
+
     size_t last_dot = domain.rfind('.');
     std::string tld = domain.substr(last_dot + 1);
     if (tld.length() < 2) return false;
-    
-    for (char c : domain) {
-        if (!isalnum(c) && c != '.' && c != '-') 
+
+    for (unsigned char c : domain) {
+        if (!std::isalnum(c) && c != '.' && c != '-')
             return false;
     }
-    
+
     return true;
 }
 
@@ -145,7 +145,7 @@ bool is_valid_email(const std::string& email) {
 std::string url_encode(const std::string& s) {
     std::ostringstream oss;
     for (unsigned char c : s) {
-        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
             oss << c;
         } else {
             oss << '%' << std::uppercase << std::hex << std::setw(2) << std::setfill('0') << (int)c;
@@ -266,10 +266,10 @@ std::string get_app_directory() {
     if (length == 0 || length == MAX_PATH) {
         return "";
     }
-    
+
     std::string exePath(buffer);
     // Strip the .exe filename to get directory
-    size_t lastSlash = exePath.find_last_of("\\");
+    size_t lastSlash = exePath.find_last_of('\\');
     if (lastSlash != std::string::npos) {
         return exePath.substr(0, lastSlash);
     }
@@ -279,7 +279,7 @@ std::string get_app_directory() {
 // ─── Get AppData Roaming Folder ───────────────────────────────────────────────
 std::string get_appdata_folder() {
     char path[MAX_PATH];
-    if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, path))) {
+    if (SUCCEEDED(SHGetFolderPathA(nullptr, CSIDL_APPDATA, nullptr, 0, path))) {
         return std::string(path);
     }
     // Fallback to environment variable
@@ -292,20 +292,14 @@ std::string get_appdata_folder() {
 
 // ─── Ensure Directory Exists ──────────────────────────────────────────────────
 bool ensure_directory_exists(const std::string& path) {
-    // Use CreateDirectoryA which creates single level only
-    // For nested creation, we need to check parent first
+    // CreateDirectoryA only creates a single level, so create each parent first.
+    // Failures here are ignored (usually ERROR_ALREADY_EXISTS); the final call decides.
     size_t pos = 0;
     while ((pos = path.find('\\', pos)) != std::string::npos) {
         std::string dir = path.substr(0, pos++);
-        if (!dir.empty() && !CreateDirectoryA(dir.c_str(), NULL)) {
-            // Directory might already exist, which is OK
-            if (GetLastError() != ERROR_ALREADY_EXISTS) {
-                // Might fail for other reasons, but continue trying
-            }
-        }
+        if (!dir.empty()) CreateDirectoryA(dir.c_str(), nullptr);
     }
-    // Create the final directory
-    return CreateDirectoryA(path.c_str(), NULL) != 0 || GetLastError() == ERROR_ALREADY_EXISTS;
+    return CreateDirectoryA(path.c_str(), nullptr) != 0 || GetLastError() == ERROR_ALREADY_EXISTS;
 }
 
 // ─── Read Local File ──────────────────────────────────────────────────────────
@@ -318,12 +312,14 @@ std::string read_file(const std::string& filepath) {
 }
 
 // ─── INR Conversion ───────────────────────────────────────────────────────────
+constexpr double USD_TO_INR_RATE = 83.5;
+
 std::string get_worth_in_inr(const std::string& worth_usd) {
     if (worth_usd == "N/A") return "N/A";
     if (!worth_usd.empty() && worth_usd[0] == '$') {
         try {
             double usd_val = std::stod(worth_usd.substr(1));
-            double inr_val = usd_val * 83.5;
+            double inr_val = usd_val * USD_TO_INR_RATE;
             std::ostringstream stream;
             stream << std::fixed << std::setprecision(2) << "Rs. " << inr_val;
             return stream.str();
@@ -332,286 +328,216 @@ std::string get_worth_in_inr(const std::string& worth_usd) {
     return worth_usd;
 }
 
-// ─── WinHTTP GET helper ───────────────────────────────────────────────────────
-std::string winhttp_get(const std::string& url, const std::string& extra_headers = "") {
-    std::wstring wurl(url.begin(), url.end());
-    HINTERNET hSession = WinHttpOpen(
-        L"GameStash/1.0",
-        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
-        WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!hSession) return "";
+// ─── WinHTTP helpers ──────────────────────────────────────────────────────────
+struct WinHttpHandle {
+    HINTERNET h = nullptr;
+    explicit WinHttpHandle(HINTERNET handle) : h(handle) {}
+    ~WinHttpHandle() { if (h) WinHttpCloseHandle(h); }
+    WinHttpHandle(const WinHttpHandle&) = delete;
+    WinHttpHandle& operator=(const WinHttpHandle&) = delete;
+    explicit operator bool() const { return h != nullptr; }
+};
 
-    WinHttpSetTimeouts(hSession, 10000, 10000, 10000, 10000);
+// Performs a single HTTP(S) request and returns the response body, or "" on failure.
+// `headers` is a CRLF-separated header block; `body` is sent as-is when non-empty.
+std::string winhttp_request(const wchar_t* method, const std::string& url,
+                            const std::string& headers, const std::string& body = "") {
+    std::wstring wurl(url.begin(), url.end());
+    WinHttpHandle session(WinHttpOpen(L"GameStash/1.0",
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+    if (!session) return "";
+    WinHttpSetTimeouts(session.h, 10000, 10000, 10000, 10000);
 
     URL_COMPONENTS urlComp = {};
     urlComp.dwStructSize = sizeof(urlComp);
     wchar_t hostName[256], urlPath[2048];
     urlComp.lpszHostName = hostName; urlComp.dwHostNameLength = 256;
     urlComp.lpszUrlPath = urlPath; urlComp.dwUrlPathLength = 2048;
+    if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &urlComp)) return "";
 
-    if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &urlComp)) {
-        WinHttpCloseHandle(hSession);
+    WinHttpHandle connect(WinHttpConnect(session.h, hostName, urlComp.nPort, 0));
+    if (!connect) return "";
+
+    DWORD flags = (urlComp.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
+    WinHttpHandle request(WinHttpOpenRequest(connect.h, method, urlPath, nullptr,
+        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags));
+    if (!request) return "";
+
+    std::wstring wheaders(headers.begin(), headers.end());
+    if (!WinHttpAddRequestHeaders(request.h, wheaders.c_str(), (DWORD)-1,
+                                  WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE)) {
+        debug_log("[WARN] WinHttpAddRequestHeaders failed with error: " + std::to_string(GetLastError()));
+    }
+
+    LPVOID data = body.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID)body.data();
+    if (!WinHttpSendRequest(request.h, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                            data, (DWORD)body.size(), (DWORD)body.size(), 0)) {
+        debug_log("[ERROR] WinHttpSendRequest failed with error: " + std::to_string(GetLastError()));
+        return "";
+    }
+    if (!WinHttpReceiveResponse(request.h, nullptr)) {
+        debug_log("[ERROR] WinHttpReceiveResponse failed with error: " + std::to_string(GetLastError()));
         return "";
     }
 
-    HINTERNET hConnect = WinHttpConnect(hSession, hostName, urlComp.nPort, 0);
-    if (!hConnect) { WinHttpCloseHandle(hSession); return ""; }
-
-    DWORD flags = (urlComp.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
-    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", urlPath, NULL,
-        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
-    if (!hRequest) { WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return ""; }
-
-    std::wstring headers = L"User-Agent: GameStash/1.0\r\nAccept: application/json\r\n";
-    if (!extra_headers.empty()) {
-        std::wstring wex(extra_headers.begin(), extra_headers.end());
-        headers += wex;
-    }
-    // Use WinHttpAddRequestHeaders to properly add headers before sending
-    BOOL headerAdded = WinHttpAddRequestHeaders(hRequest, headers.c_str(), (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
-    if (!headerAdded) {
-        DWORD err = GetLastError();
-        debug_log("[WARN] WinHttpAddRequestHeaders GET failed with error: " + std::to_string(err));
-    }
-    WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
-    WinHttpReceiveResponse(hRequest, NULL);
-
-    std::string response;
-    DWORD dwSize = 0;
-    do {
-        dwSize = 0;
-        WinHttpQueryDataAvailable(hRequest, &dwSize);
-        if (dwSize == 0) break;
-        std::vector<char> buf(dwSize + 1, 0);
-        DWORD dwRead = 0;
-        WinHttpReadData(hRequest, buf.data(), dwSize, &dwRead);
-        response.append(buf.data(), dwRead);
-    } while (dwSize > 0);
-
-    WinHttpCloseHandle(hRequest);
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
-    return response;
-}
-
-// ─── WinHTTP POST helper ──────────────────────────────────────────────────────
-std::string winhttp_post(const std::string& url, const std::string& body,
-                         const std::string& custom_headers = "") {
-    std::wstring wurl(url.begin(), url.end());
-    HINTERNET hSession = WinHttpOpen(L"GameStash/1.0",
-        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!hSession) return "";
-    WinHttpSetTimeouts(hSession, 10000, 10000, 10000, 10000);
-
-    URL_COMPONENTS urlComp = {};
-    urlComp.dwStructSize = sizeof(urlComp);
-    wchar_t hostName[256], urlPath[2048];
-    urlComp.lpszHostName = hostName; urlComp.dwHostNameLength = 256;
-    urlComp.lpszUrlPath = urlPath; urlComp.dwUrlPathLength = 2048;
-
-    if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &urlComp)) {
-        WinHttpCloseHandle(hSession); return "";
-    }
-
-    HINTERNET hConnect = WinHttpConnect(hSession, hostName, urlComp.nPort, 0);
-    if (!hConnect) { WinHttpCloseHandle(hSession); return ""; }
-
-    DWORD flags = (urlComp.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
-    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"POST", urlPath, NULL,
-        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
-    if (!hRequest) { WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return ""; }
-
-    // Add headers
-    std::string final_headers = custom_headers;
-    if (final_headers.empty()) {
-        final_headers = "Content-Type: application/json\r\nAccept: application/json\r\n";
-    }
-    std::wstring wheaders(final_headers.begin(), final_headers.end());
-    BOOL headerAdded = WinHttpAddRequestHeaders(hRequest, wheaders.c_str(), (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
-    if (!headerAdded) {
-        DWORD err = GetLastError();
-        debug_log("[WARN] WinHttpAddRequestHeaders POST failed with error: " + std::to_string(err));
-    }
-    
-    BOOL sendResult = WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-        (LPVOID)body.c_str(), (DWORD)body.size(), (DWORD)body.size(), 0);
-    if (!sendResult) {
-        DWORD err = GetLastError();
-        debug_log("[ERROR] WinHttpSendRequest POST failed with error: " + std::to_string(err));
-        WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return "{\"error\":\"SendRequest failed\"}";
-    }
-    
-    BOOL recvResult = WinHttpReceiveResponse(hRequest, NULL);
-    if (!recvResult) {
-        DWORD err = GetLastError();
-        debug_log("[ERROR] WinHttpReceiveResponse POST failed with error: " + std::to_string(err));
-        WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return "{\"error\":\"ReceiveResponse failed\"}";
-    }
-
-    // Check HTTP status code
     DWORD statusCode = 0;
     DWORD statusCodeSize = sizeof(statusCode);
-    WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+    WinHttpQueryHeaders(request.h, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
         WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &statusCodeSize, WINHTTP_NO_HEADER_INDEX);
-    debug_log("[INFO] POST HTTP Status Code: " + std::to_string(statusCode));
+    debug_log("[INFO] HTTP " + std::to_string(statusCode) + " from " + url);
 
     std::string response;
     DWORD dwSize = 0;
-    do {
-        dwSize = 0;
-        WinHttpQueryDataAvailable(hRequest, &dwSize);
-        if (dwSize == 0) break;
-        std::vector<char> buf(dwSize + 1, 0);
+    while (WinHttpQueryDataAvailable(request.h, &dwSize) && dwSize > 0) {
+        std::vector<char> buf(dwSize);
         DWORD dwRead = 0;
-        WinHttpReadData(hRequest, buf.data(), dwSize, &dwRead);
+        if (!WinHttpReadData(request.h, buf.data(), dwSize, &dwRead)) break;
         response.append(buf.data(), dwRead);
-    } while (dwSize > 0);
-
-    WinHttpCloseHandle(hRequest);
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
+    }
     return response;
 }
 
-// ─── OAuth: Start Local Callback Server ───────────────────────────────────────
-// Runs in a background thread, listens for OAuth redirect
-void start_oauth_server_thread(const std::string& provider, const std::string& state,
-                                webview::webview* w, const std::vector<char>& _unused) {
+std::string winhttp_get(const std::string& url, const std::string& extra_headers = "") {
+    return winhttp_request(L"GET", url,
+        "User-Agent: GameStash/1.0\r\nAccept: application/json\r\n" + extra_headers);
+}
+
+// POSTs a form-encoded body (what the OAuth token endpoints expect).
+std::string winhttp_post_form(const std::string& url, const std::string& body) {
+    return winhttp_request(L"POST", url,
+        "Content-Type: application/x-www-form-urlencoded\r\nAccept: application/json\r\n", body);
+}
+
+// ─── JSON / SQLite helpers ────────────────────────────────────────────────────
+// Parses `s` and returns the object, or an empty object if it is malformed or not an object.
+json parse_json_object(const std::string& s) {
+    json j = json::parse(s, nullptr, false);
+    return j.is_object() ? j : json::object();
+}
+
+// Reads a TEXT column as std::string, mapping NULL to "".
+std::string column_str(sqlite3_stmt* stmt, int col) {
+    const unsigned char* text = sqlite3_column_text(stmt, col);
+    return text ? reinterpret_cast<const char*>(text) : "";
+}
+
+// ─── OAuth: Local Callback Server ─────────────────────────────────────────────
+// Runs in a background thread and serves the provider's redirect. It verifies the
+// state token, exchanges the code for an access token, fetches the user profile,
+// upserts it into the DB and hands the result to the webview via handleOAuthResult.
+void run_oauth_callback_server(webview::webview* w) {
     httplib::Server svr;
-    g_oauth_server_running = true;
 
-    std::string callback_path = "/oauth/" + provider + "/callback";
+    svr.Get(R"(/oauth/(google|discord)/callback)", [&](const httplib::Request& req, httplib::Response& res) {
+        const std::string provider = req.matches[1];
+        const std::string code = req.get_param_value("code");
+        const std::string state = req.get_param_value("state");
 
-    svr.Get(callback_path.c_str(), [&](const httplib::Request& req, httplib::Response& res) {
-        std::string code = req.get_param_value("code");
-        std::string recv_state = req.get_param_value("recv_state");
+        std::string expected_provider, expected_state;
+        {
+            std::lock_guard<std::mutex> lock(g_oauth_mutex);
+            expected_provider = g_oauth_expected_provider;
+            expected_state = g_oauth_expected_state;
+        }
 
-        // Exchange code for tokens + get user info
         json result;
         result["provider"] = provider;
-        result["code"] = code;
 
-        // Exchange token
-        std::string token_resp;
-        json token_json;
-        if (provider == "google") {
-            std::string body = "code=" + url_encode(code)
-                + "&client_id=" + url_encode(g_oauth_config["google"]["client_id"].get<std::string>())
-                + "&client_secret=" + url_encode(g_oauth_config["google"]["client_secret"].get<std::string>())
-                + "&redirect_uri=" + url_encode(g_oauth_config["google"]["redirect_uri"].get<std::string>())
+        if (provider != expected_provider || state.empty() || state != expected_state) {
+            debug_log("[WARN] OAuth callback rejected: provider/state mismatch for " + provider);
+            res.status = 400;
+            res.set_content("Invalid OAuth response. Please return to Game Stash and try again.", "text/plain");
+        } else {
+            const bool is_google = provider == "google";
+            const json cfg = g_oauth_config.value(provider, json::object());
+            const std::string body = "code=" + url_encode(code)
+                + "&client_id=" + url_encode(cfg.value("client_id", ""))
+                + "&client_secret=" + url_encode(cfg.value("client_secret", ""))
+                + "&redirect_uri=" + url_encode(cfg.value("redirect_uri", ""))
                 + "&grant_type=authorization_code";
-            token_resp = winhttp_post("https://oauth2.googleapis.com/token", body);
-            try { token_json = json::parse(token_resp); } catch (...) {}
+            const char* token_url = is_google ? "https://oauth2.googleapis.com/token"
+                                              : "https://discord.com/api/oauth2/token";
+            const char* userinfo_url = is_google ? "https://www.googleapis.com/oauth2/v2/userinfo"
+                                                 : "https://discord.com/api/users/@me";
 
+            json token_json = parse_json_object(winhttp_post_form(token_url, body));
             std::string access_token = token_json.value("access_token", "");
             if (!access_token.empty()) {
-                std::string user_resp = winhttp_get("https://www.googleapis.com/oauth2/v2/userinfo",
-                    "Authorization: Bearer " + access_token + "\r\n");
-                try {
-                    json user_json = json::parse(user_resp);
-                    result["user_id"] = user_json.value("id", "");
+                json user_json = parse_json_object(winhttp_get(userinfo_url,
+                    "Authorization: Bearer " + access_token + "\r\n"));
+                std::string uid = user_json.value("id", "");
+                result["user_id"] = uid;
+                result["email"] = user_json.value("email", "");
+                if (is_google) {
                     result["name"] = user_json.value("name", "Google User");
-                    result["email"] = user_json.value("email", "");
                     result["avatar"] = user_json.value("picture", "");
-                } catch (...) {}
-            }
-        } else if (provider == "discord") {
-            std::string body = "code=" + url_encode(code)
-                + "&client_id=" + url_encode(g_oauth_config["discord"]["client_id"].get<std::string>())
-                + "&client_secret=" + url_encode(g_oauth_config["discord"]["client_secret"].get<std::string>())
-                + "&redirect_uri=" + url_encode(g_oauth_config["discord"]["redirect_uri"].get<std::string>())
-                + "&grant_type=authorization_code";
-            token_resp = winhttp_post("https://discord.com/api/oauth2/token", body);
-            try { token_json = json::parse(token_resp); } catch (...) {}
-
-            std::string access_token = token_json.value("access_token", "");
-            if (!access_token.empty()) {
-                std::string user_resp = winhttp_get("https://discord.com/api/users/@me",
-                    "Authorization: Bearer " + access_token + "\r\n");
-                try {
-                    json user_json = json::parse(user_resp);
+                } else {
                     std::string avatar_hash = user_json.value("avatar", "");
-                    std::string uid = user_json.value("id", "");
-                    std::string avatar_url = avatar_hash.empty() ? "" :
-                        "https://cdn.discordapp.com/avatars/" + uid + "/" + avatar_hash + ".png";
-                    result["user_id"] = uid;
                     result["name"] = user_json.value("username", "Discord User");
-                    result["email"] = user_json.value("email", "");
-                    result["avatar"] = avatar_url;
-                } catch (...) {}
-            }
-        }
-
-        // Save user to DB
-        int db_user_id = -1;
-        if (result.contains("user_id") && !result["user_id"].get<std::string>().empty()) {
-            std::string pid = result["user_id"].get<std::string>();
-            std::string prov = provider;
-            std::string name = result.value("name", "User");
-            std::string email = result.value("email", "");
-            std::string avatar = result.value("avatar", "");
-
-            // Upsert user
-            const char* upsert = R"(
-                INSERT INTO users (username, email, provider, provider_id, avatar_url)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(email) DO UPDATE SET
-                    username=excluded.username,
-                    provider=excluded.provider,
-                    provider_id=excluded.provider_id,
-                    avatar_url=excluded.avatar_url
-            )";
-            sqlite3_stmt* stmt;
-            if (sqlite3_prepare_v2(g_db, upsert, -1, &stmt, nullptr) == SQLITE_OK) {
-                sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(stmt, 2, email.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(stmt, 3, prov.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(stmt, 4, pid.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(stmt, 5, avatar.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_step(stmt);
-                sqlite3_finalize(stmt);
-            }
-
-            // Get DB id
-            const char* sel = "SELECT id FROM users WHERE provider_id=? AND provider=?";
-            if (sqlite3_prepare_v2(g_db, sel, -1, &stmt, nullptr) == SQLITE_OK) {
-                sqlite3_bind_text(stmt, 1, pid.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(stmt, 2, prov.c_str(), -1, SQLITE_TRANSIENT);
-                if (sqlite3_step(stmt) == SQLITE_ROW) {
-                    db_user_id = sqlite3_column_int(stmt, 0);
+                    result["avatar"] = avatar_hash.empty() ? "" :
+                        "https://cdn.discordapp.com/avatars/" + uid + "/" + avatar_hash + ".png";
                 }
-                sqlite3_finalize(stmt);
             }
+
+            // Upsert the user and look up its DB id
+            int db_user_id = -1;
+            std::string pid = result.value("user_id", "");
+            if (!pid.empty()) {
+                std::string name = result.value("name", "User");
+                std::string email = result.value("email", "");
+                std::string avatar = result.value("avatar", "");
+
+                const char* upsert = R"(
+                    INSERT INTO users (username, email, provider, provider_id, avatar_url)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(email) DO UPDATE SET
+                        username=excluded.username,
+                        provider=excluded.provider,
+                        provider_id=excluded.provider_id,
+                        avatar_url=excluded.avatar_url
+                )";
+                sqlite3_stmt* stmt = nullptr;
+                if (sqlite3_prepare_v2(g_db, upsert, -1, &stmt, nullptr) == SQLITE_OK) {
+                    sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(stmt, 2, email.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(stmt, 3, provider.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(stmt, 4, pid.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(stmt, 5, avatar.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_step(stmt);
+                    sqlite3_finalize(stmt);
+                }
+
+                const char* sel = "SELECT id FROM users WHERE provider_id=? AND provider=?";
+                if (sqlite3_prepare_v2(g_db, sel, -1, &stmt, nullptr) == SQLITE_OK) {
+                    sqlite3_bind_text(stmt, 1, pid.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(stmt, 2, provider.c_str(), -1, SQLITE_TRANSIENT);
+                    if (sqlite3_step(stmt) == SQLITE_ROW) {
+                        db_user_id = sqlite3_column_int(stmt, 0);
+                    }
+                    sqlite3_finalize(stmt);
+                }
+            }
+            result["db_id"] = db_user_id;
+
+            res.set_content(R"(<!DOCTYPE html><html><head>
+                <style>body{background:#0a0a0f;color:#fff;font-family:Inter,sans-serif;
+                display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;}
+                h2{color:#00d8ff;} p{color:#888;}</style></head><body>
+                <h2>✓ Login Successful!</h2>
+                <p>You can close this window and return to Game Stash.</p>
+                </body></html>)", "text/html");
+
+            std::string js = "handleOAuthResult(" + result.dump() + ");";
+            w->dispatch([w, js]() { w->eval(js); });
         }
 
-        result["db_id"] = db_user_id;
-        std::string result_str = result.dump();
-
-        // Return a nice closing page
-        res.set_content(R"(<!DOCTYPE html><html><head>
-            <style>body{background:#0a0a0f;color:#fff;font-family:Inter,sans-serif;
-            display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;}
-            h2{color:#00d8ff;} p{color:#888;}</style></head><body>
-            <h2>✓ Login Successful!</h2>
-            <p>You can close this window and return to Game Stash.</p>
-            </body></html>)", "text/html");
-
-        // Notify the webview via dispatch
-        std::string js = "handleOAuthResult(" + result_str + ");";
-        w->dispatch([w, js]() { w->eval(js); });
-
-        // Stop server after handling
+        // One callback per server lifetime; startOAuth spins up a fresh one next time
         svr.stop();
-        g_oauth_server_running = false;
     });
 
-    svr.listen("127.0.0.1", 9876);
+    if (!svr.listen("127.0.0.1", 9876)) {
+        debug_log("[ERROR] OAuth callback server could not listen on 127.0.0.1:9876");
+    }
     g_oauth_server_running = false;
 }
 
@@ -619,10 +545,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // Get absolute path to the app directory from .exe location
     g_app_dir = get_app_directory();
     if (g_app_dir.empty()) {
-        MessageBoxW(NULL, L"Failed to determine application directory!", L"GameStash Error", MB_ICONERROR);
+        MessageBoxW(nullptr, L"Failed to determine application directory!", L"GameStash Error", MB_ICONERROR);
         return 1;
     }
-    
+
     // Determine the resource directory
     // If running from a build folder during development, use parent directory for resources
     g_resource_dir = g_app_dir;
@@ -638,14 +564,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     if (g_resource_dir != g_app_dir) {
         debug_log("Development mode detected - using parent directory for resources");
     }
-    
+
     // Set up AppData folder for database storage
     std::string appdata_path = get_appdata_folder();
     if (appdata_path.empty()) {
-        MessageBoxW(NULL, L"Failed to determine AppData directory!", L"GameStash Error", MB_ICONERROR);
+        MessageBoxW(nullptr, L"Failed to determine AppData directory!", L"GameStash Error", MB_ICONERROR);
         return 1;
     }
-    
+
     std::string gamestash_appdata = appdata_path + "\\GameStash";
     if (!ensure_directory_exists(gamestash_appdata)) {
         debug_log("Warning: Could not create GameStash AppData directory, using app directory instead");
@@ -654,7 +580,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         g_db_path = gamestash_appdata + "\\gamestash.db";
         debug_log("AppData directory created at: " + gamestash_appdata);
     }
-    
+
     debug_log("Database Path: " + g_db_path);
 
     // Load OAuth config from resource directory
@@ -674,7 +600,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     // Init Database
     if (!db_init()) {
-        MessageBoxW(NULL, L"Failed to initialize database!", L"GameStash Error", MB_ICONERROR);
+        MessageBoxW(nullptr, L"Failed to initialize database!", L"GameStash Error", MB_ICONERROR);
         return 1;
     }
 
@@ -690,7 +616,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     debug_log("HTML file exists: " + std::string(file_exists(html_file) ? "YES" : "NO"));
 
     // ─── Binding: fetchGiveaways ──────────────────────────────────────────────
-    w.bind("fetchGiveaways", [&](const std::string& req) -> std::string {
+    w.bind("fetchGiveaways", [&](const std::string&) -> std::string {
         debug_log("fetchGiveaways called");
         try {
             httplib::Client cli("http://www.gamerpower.com");
@@ -734,14 +660,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 w.dispatch([&w, url]() { w.navigate(url); });
                 return json({{"success", true}}).dump();
             }
-        } catch (...) {}
+        } catch (const std::exception& e) {
+            debug_log("navigateToUrl: bad args: " + std::string(e.what()));
+        }
         return json({{"success", false}}).dump();
     });
 
     // ─── Binding: navigateBack (back to app) ─────────────────────────────────
     w.bind("navigateBack", [&](const std::string&) -> std::string {
         debug_log("navigateBack called");
-        w.dispatch([&w]() { 
+        w.dispatch([&w]() {
             w.navigate(g_app_html_path);
             // After navigation, show the back button overlay setup script
             std::string js = R"(
@@ -768,9 +696,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             if (args.is_array() && args.size() >= 2) {
                 std::string title = args[0].get<std::string>();
                 std::string message = args[1].get<std::string>();
-                
+
                 // Security: Escape single quotes for PowerShell to prevent command injection
-                auto escape_ps = [](std::string s) {
+                auto escape_ps = [](const std::string& s) {
                     std::string res;
                     for (char c : s) {
                         if (c == '\'') res += "''";
@@ -780,7 +708,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                     }
                     return res;
                 };
-                
+
                 std::string e_title = escape_ps(title);
                 std::string e_message = escape_ps(message);
 
@@ -794,7 +722,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                     "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($APP_ID).Show($toast)\"";
                 std::thread([cmd]() { system(cmd.c_str()); }).detach();
             }
-        } catch (...) {}
+        } catch (const std::exception& e) {
+            debug_log("sendNotification: bad args: " + std::string(e.what()));
+        }
         return json({{"success", true}}).dump();
     });
 
@@ -830,8 +760,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
     });
 
-    // ─── Binding: testSupabaseConnection (Removed) ─────────────────────────────
-
     // ─── Binding: registerUser (email + password) ─────────────────────────────
     w.bind("registerUser", [&](const std::string& req) -> std::string {
         try {
@@ -846,13 +774,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             // Validate input
             if (username.empty() || email.empty() || password.empty())
                 return json({{"error", "All fields required"}}).dump();
-            
+
             if (username.length() < 3)
                 return json({{"error", "Username must be at least 3 characters"}}).dump();
-            
+
             if (password.length() < 6)
                 return json({{"error", "Password must be at least 6 characters"}}).dump();
-            
+
             // Email validation
             if (!is_valid_email(email))
                 return json({{"error", "Invalid email format"}}).dump();
@@ -862,7 +790,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             std::string hash = sha256_hex(password, salt);
 
             const char* sql = "INSERT INTO users (username, email, password_hash, password_salt, provider) VALUES (?, ?, ?, ?, 'local')";
-            sqlite3_stmt* stmt;
+            sqlite3_stmt* stmt = nullptr;
             if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK)
                 return json({{"error", "DB error"}}).dump();
 
@@ -880,11 +808,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
             int64_t uid = sqlite3_last_insert_rowid(g_db);
             json user = {
-                {"id", uid}, 
-                {"name", username}, 
-                {"email", email}, 
-                {"provider", "local"}, 
-                {"avatar", ""}, 
+                {"id", uid},
+                {"name", username},
+                {"email", email},
+                {"provider", "local"},
+                {"avatar", ""},
                 {"db_id", uid},
                 {"bio", ""},
                 {"country", ""},
@@ -905,20 +833,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
             std::string email    = args[0].get<std::string>();
             std::string password = args[1].get<std::string>();
-            
+
             // Email validation
             if (!is_valid_email(email))
                 return json({{"error", "Invalid email format"}}).dump();
-            
+
             // First, get the salt for this email
-            std::string salt = "";
+            std::string salt;
             const char* salt_sql = "SELECT password_salt FROM users WHERE email=?";
-            sqlite3_stmt* salt_stmt;
+            sqlite3_stmt* salt_stmt = nullptr;
             if (sqlite3_prepare_v2(g_db, salt_sql, -1, &salt_stmt, nullptr) == SQLITE_OK) {
                 sqlite3_bind_text(salt_stmt, 1, email.c_str(), -1, SQLITE_TRANSIENT);
                 if (sqlite3_step(salt_stmt) == SQLITE_ROW) {
-                    auto s = sqlite3_column_text(salt_stmt, 0);
-                    if (s) salt = std::string(reinterpret_cast<const char*>(s));
+                    salt = column_str(salt_stmt, 0);
                 }
                 sqlite3_finalize(salt_stmt);
             }
@@ -926,7 +853,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             std::string hash = sha256_hex(password, salt);
 
             const char* sql = "SELECT id, username, email, provider, avatar_url, bio, country, favorite_platform FROM users WHERE email=? AND password_hash=?";
-            sqlite3_stmt* stmt;
+            sqlite3_stmt* stmt = nullptr;
             if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK)
                 return json({{"error", "DB error"}}).dump();
 
@@ -934,27 +861,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             sqlite3_bind_text(stmt, 2, hash.c_str(), -1, SQLITE_TRANSIENT);
 
             json user;
-            int user_db_id = -1;
             if (sqlite3_step(stmt) == SQLITE_ROW) {
-                user_db_id = sqlite3_column_int(stmt, 0);
+                int user_db_id = sqlite3_column_int(stmt, 0);
                 user["db_id"] = user_db_id;
                 user["id"] = user_db_id;
-                user["name"] = std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)));
-                user["email"] = std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2)));
-                user["provider"] = std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3)));
-                auto av = sqlite3_column_text(stmt, 4);
-                user["avatar"] = av ? std::string(reinterpret_cast<const char*>(av)) : "";
-                auto bio = sqlite3_column_text(stmt, 5);
-                user["bio"] = bio ? std::string(reinterpret_cast<const char*>(bio)) : "";
-                auto country = sqlite3_column_text(stmt, 6);
-                user["country"] = country ? std::string(reinterpret_cast<const char*>(country)) : "";
-                auto fav_plat = sqlite3_column_text(stmt, 7);
-                user["favorite_platform"] = fav_plat ? std::string(reinterpret_cast<const char*>(fav_plat)) : "";
+                user["name"] = column_str(stmt, 1);
+                user["email"] = column_str(stmt, 2);
+                user["provider"] = column_str(stmt, 3);
+                user["avatar"] = column_str(stmt, 4);
+                user["bio"] = column_str(stmt, 5);
+                user["country"] = column_str(stmt, 6);
+                user["favorite_platform"] = column_str(stmt, 7);
             }
             sqlite3_finalize(stmt);
 
             if (user.empty()) return json({{"error", "Invalid email or password"}}).dump();
-            
+
             return json({{"success", true}, {"user", user}}).dump();
         } catch (const std::exception& e) {
             return json({{"error", e.what()}}).dump();
@@ -969,37 +891,33 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 return json({{"error", "No provider"}}).dump();
 
             std::string provider = args[0].get<std::string>();
-            std::string state = generate_random_state();
-            std::string auth_url;
-
-            if (provider == "google") {
-                std::string client_id = g_oauth_config["google"]["client_id"].get<std::string>();
-                std::string redirect = g_oauth_config["google"]["redirect_uri"].get<std::string>();
-                auth_url = "https://accounts.google.com/o/oauth2/v2/auth?"
-                    "client_id=" + url_encode(client_id) +
-                    "&redirect_uri=" + url_encode(redirect) +
-                    "&response_type=code"
-                    "&scope=" + url_encode("openid email profile") +
-                    "&state=" + state;
-            } else if (provider == "discord") {
-                std::string client_id = g_oauth_config["discord"]["client_id"].get<std::string>();
-                std::string redirect = g_oauth_config["discord"]["redirect_uri"].get<std::string>();
-                auth_url = "https://discord.com/api/oauth2/authorize?"
-                    "client_id=" + url_encode(client_id) +
-                    "&redirect_uri=" + url_encode(redirect) +
-                    "&response_type=code"
-                    "&scope=" + url_encode("identify email") +
-                    "&state=" + state;
-            } else {
+            const bool is_google = provider == "google";
+            if (!is_google && provider != "discord")
                 return json({{"error", "Unknown provider"}}).dump();
-            }
 
-            // Start local callback server in background thread
-            if (!g_oauth_server_running) {
-                std::thread([provider, state, &w]() {
-                    std::vector<char> unused;
-                    start_oauth_server_thread(provider, state, &w, unused);
-                }).detach();
+            json cfg = g_oauth_config.value(provider, json::object());
+            if (!cfg.contains("client_id") || !cfg.contains("redirect_uri"))
+                return json({{"error", "OAuth is not configured for " + provider}}).dump();
+
+            std::string state = generate_random_state();
+            std::string auth_url = std::string(is_google
+                    ? "https://accounts.google.com/o/oauth2/v2/auth?"
+                    : "https://discord.com/api/oauth2/authorize?")
+                + "client_id=" + url_encode(cfg.value("client_id", ""))
+                + "&redirect_uri=" + url_encode(cfg.value("redirect_uri", ""))
+                + "&response_type=code"
+                + "&scope=" + url_encode(is_google ? "openid email profile" : "identify email")
+                + "&state=" + state;
+
+            // Record what the callback must match, then make sure a server is listening
+            {
+                std::lock_guard<std::mutex> lock(g_oauth_mutex);
+                g_oauth_expected_provider = provider;
+                g_oauth_expected_state = state;
+            }
+            bool not_running = false;
+            if (g_oauth_server_running.compare_exchange_strong(not_running, true)) {
+                std::thread(run_oauth_callback_server, &w).detach();
             }
 
             // Navigate webview to OAuth URL
@@ -1019,7 +937,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 return json({{"error", "Invalid args"}}).dump();
 
             int user_id_int = args[0].get<int>();
-            json game = args[1];
+            const json& game = args[1];
 
             int game_id = game.value("id", -1);
             std::string title = game.value("title", "");
@@ -1035,7 +953,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 (user_id, game_id, title, thumbnail, platforms, worth_inr, open_giveaway_url)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             )";
-            sqlite3_stmt* stmt;
+            sqlite3_stmt* stmt = nullptr;
             if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK)
                 return json({{"error", "DB error"}}).dump();
 
@@ -1063,12 +981,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 return json::array().dump();
 
             int user_id_int = args[0].get<int>();
-            
+
             const char* sql = R"(
                 SELECT game_id, title, thumbnail, platforms, worth_inr, open_giveaway_url, claimed_at
                 FROM claimed_games WHERE user_id=? ORDER BY claimed_at DESC
             )";
-            sqlite3_stmt* stmt;
+            sqlite3_stmt* stmt = nullptr;
             if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK)
                 return json::array().dump();
 
@@ -1077,18 +995,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             while (sqlite3_step(stmt) == SQLITE_ROW) {
                 json g;
                 g["id"] = sqlite3_column_int(stmt, 0);
-                auto col1 = sqlite3_column_text(stmt, 1);
-                auto col2 = sqlite3_column_text(stmt, 2);
-                auto col3 = sqlite3_column_text(stmt, 3);
-                auto col4 = sqlite3_column_text(stmt, 4);
-                auto col5 = sqlite3_column_text(stmt, 5);
-                auto col6 = sqlite3_column_text(stmt, 6);
-                g["title"] = col1 ? (const char*)col1 : "";
-                g["thumbnail"] = col2 ? (const char*)col2 : "";
-                g["platforms"] = col3 ? (const char*)col3 : "";
-                g["worth_inr"] = col4 ? (const char*)col4 : "";
-                g["open_giveaway_url"] = col5 ? (const char*)col5 : "";
-                g["claimed_at"] = col6 ? (const char*)col6 : "";
+                g["title"] = column_str(stmt, 1);
+                g["thumbnail"] = column_str(stmt, 2);
+                g["platforms"] = column_str(stmt, 3);
+                g["worth_inr"] = column_str(stmt, 4);
+                g["open_giveaway_url"] = column_str(stmt, 5);
+                g["claimed_at"] = column_str(stmt, 6);
                 results.push_back(g);
             }
             sqlite3_finalize(stmt);
@@ -1107,15 +1019,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
             int user_id_int = args[0].get<int>();
             debug_log("getUserProfile called for user_id: " + std::to_string(user_id_int));
-            
+
             if (user_id_int <= 0)
                 return json({{"error", "Invalid user_id: " + std::to_string(user_id_int)}}).dump();
-            
+
             const char* sql = R"(
                 SELECT id, username, email, avatar_url, bio, country, favorite_platform, created_at, provider
                 FROM users WHERE id=?
             )";
-            sqlite3_stmt* stmt;
+            sqlite3_stmt* stmt = nullptr;
             if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
                 debug_log("DB prepare error: " + std::string(sqlite3_errmsg(g_db)));
                 return json({{"error", "DB error: " + std::string(sqlite3_errmsg(g_db))}}).dump();
@@ -1126,23 +1038,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
             if (sqlite3_step(stmt) == SQLITE_ROW) {
                 profile["id"] = sqlite3_column_int(stmt, 0);
-                auto col1 = sqlite3_column_text(stmt, 1);
-                auto col2 = sqlite3_column_text(stmt, 2);
-                auto col3 = sqlite3_column_text(stmt, 3);
-                auto col4 = sqlite3_column_text(stmt, 4);
-                auto col5 = sqlite3_column_text(stmt, 5);
-                auto col6 = sqlite3_column_text(stmt, 6);
-                auto col7 = sqlite3_column_text(stmt, 7);
-                auto col8 = sqlite3_column_text(stmt, 8);
-                
-                profile["username"] = col1 ? (const char*)col1 : "";
-                profile["email"] = col2 ? (const char*)col2 : "";
-                profile["avatar"] = col3 ? (const char*)col3 : "";
-                profile["bio"] = col4 ? (const char*)col4 : "";
-                profile["country"] = col5 ? (const char*)col5 : "";
-                profile["favorite_platform"] = col6 ? (const char*)col6 : "";
-                profile["created_at"] = col7 ? (const char*)col7 : "";
-                profile["provider"] = col8 ? (const char*)col8 : "";
+                profile["username"] = column_str(stmt, 1);
+                profile["email"] = column_str(stmt, 2);
+                profile["avatar"] = column_str(stmt, 3);
+                profile["bio"] = column_str(stmt, 4);
+                profile["country"] = column_str(stmt, 5);
+                profile["favorite_platform"] = column_str(stmt, 6);
+                profile["created_at"] = column_str(stmt, 7);
+                profile["provider"] = column_str(stmt, 8);
             }
             sqlite3_finalize(stmt);
 
@@ -1163,19 +1066,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 return json({{"error", "Invalid args"}}).dump();
 
             int user_id_int = args[0].get<int>();
-            json profile_data = args[1];
+            const json& profile_data = args[1];
 
-            std::string bio = profile_data.contains("bio") ? profile_data["bio"].get<std::string>() : "";
-            std::string country = profile_data.contains("country") ? profile_data["country"].get<std::string>() : "";
-            std::string fav_platform = profile_data.contains("favorite_platform") ? profile_data["favorite_platform"].get<std::string>() : "";
-            std::string avatar = profile_data.contains("avatar") ? profile_data["avatar"].get<std::string>() : "";
+            std::string bio = profile_data.value("bio", "");
+            std::string country = profile_data.value("country", "");
+            std::string fav_platform = profile_data.value("favorite_platform", "");
+            std::string avatar = profile_data.value("avatar", "");
 
             const char* sql = R"(
-                UPDATE users 
+                UPDATE users
                 SET bio=?, country=?, favorite_platform=?, avatar_url=?, updated_at=CURRENT_TIMESTAMP
                 WHERE id=?
             )";
-            sqlite3_stmt* stmt;
+            sqlite3_stmt* stmt = nullptr;
             if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK)
                 return json({{"error", "DB error"}}).dump();
 

@@ -6,8 +6,7 @@ A lightweight Windows desktop app to track your claimed free games across multip
 
 - 🎯 **Track Claimed Games** - Add games you've claimed from Epic, Steam, GOG, etc.
 - 👤 **User Profiles** - Customize your profile with bio and favorite platform
-- 📱 **Multi-Device** - Access your game library from any device
-- 💾 **Offline Mode** - Local SQLite database fallback when offline
+- 💾 **Fully Offline** - All data lives in a local SQLite database; no account server required
 - 🔐 **Secure** - Authentication support
 
 ## 🚀 Quick Start
@@ -44,8 +43,7 @@ Output: `build\GameStash.exe`
 
 - **Frontend:** WebView2 (Chromium-based)
 - **Backend:** C++ with WinHTTP
-- **Database:**
-  - Local: SQLite3
+- **Database:** Local SQLite3
 - **Dependencies:** nlohmann/json, Brotli compression
 
 ## 📁 Project Structure
@@ -70,8 +68,6 @@ FreeGameTracker/
 ├── GameStash_v1.0.0.zip  # Packaged release (example)
 ├── oauth_config.json     # OAuth config (example)
 ├── oauth_config.json.example
-├── supabase_setup.sql    # Optional: Supabase DB schema (optional)
-├── supabase_config.json  # Optional: Supabase config (optional)
 └── README.md             # Project README
 ```
 
@@ -80,14 +76,13 @@ FreeGameTracker/
 This project includes a few example configuration and helper files. Remove or update them if you're not using the corresponding services.
 
 - `oauth_config.json` / `oauth_config.json.example`: OAuth settings for third-party auth providers.
-- `supabase_setup.sql` and `supabase_config.json`: Optional Supabase database schema and configuration (remove if unused).
 
 Adjust any local paths or service credentials before building or running the app.
 
 ## 💾 Data Storage
 
 - **Windows User Profile:** `%APPDATA%\GameStash\gamestash.db`
-<!-- Cloud sync removed; local storage only -->
+- All data is stored locally on your machine. There is no cloud sync or remote database.
 
 ## 🐛 Troubleshooting
 
@@ -95,9 +90,8 @@ Adjust any local paths or service credentials before building or running the app
 - Check Windows Defender isn't blocking it
 - Ensure WebView2 is installed (auto-installs on first run)
 
-### Data not syncing
-- Check internet connection
-- Verify local configuration and credentials (if using external services)
+### Games list won't load
+- Check your internet connection (the giveaway list is fetched from the GamerPower API)
 - Check `debug.log` for error details
 
 ### Can't create account
