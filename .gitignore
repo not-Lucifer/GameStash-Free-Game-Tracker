@@ -45,7 +45,5 @@ debug.log
 # Release artifacts (keep local, not in git)
 GameStash_v1.0.0.zip
 GameStash_v1.0.0/
-build.bat
-build_dist.bat
 dist/
 ZIP_TEST_EXTRACT/
