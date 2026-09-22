@@ -3,6 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'none';
+        script-src 'self' file: 'unsafe-inline';
+        style-src 'self' file: 'unsafe-inline' https://fonts.googleapis.com;
+        font-src https://fonts.gstatic.com data:;
+        img-src 'self' file: data: https:;
+        connect-src 'none';
+        base-uri 'none';
+        object-src 'none';
+        frame-src 'none';
+        form-action 'none';">
     <title>Game Stash</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -224,6 +235,12 @@
     <script>
         // ─── Helpers ────────────────────────────────────────────────────────
         const $ = (id) => document.getElementById(id);
+        // Game ids are interpolated straight into HTML attributes and selectors,
+        // so reduce them to a bare integer rather than trusting the API's type.
+        const gid = (v) => {
+            const n = Number(v);
+            return Number.isFinite(n) ? String(Math.trunc(n)) : '';
+        };
         const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         const debug_log = (msg) => console.log('[GameStash] ' + msg);
         const parseResult = (r) => (typeof r === 'string' ? JSON.parse(r) : r);
@@ -332,10 +349,10 @@
             const ends = endsText(game);
             const d = daysLeft(game);
             const action = stashed
-                ? `<button class="btn btn-quiet" data-action="open" data-game-id="${game.id}">Open ${store ? store.label : 'store'}</button>`
-                : `<button class="btn btn-soft" data-action="claim" data-game-id="${game.id}">Claim${store ? ' on ' + store.label : ''}</button>`;
+                ? `<button class="btn btn-quiet" data-action="open" data-game-id="${gid(game.id)}">Open ${store ? store.label : 'store'}</button>`
+                : `<button class="btn btn-soft" data-action="claim" data-game-id="${gid(game.id)}">Claim${store ? ' on ' + store.label : ''}</button>`;
             return `
-                <article class="tile${stashed ? ' is-stashed' : ''}" data-game-id="${game.id}" style="--i:${i}">
+                <article class="tile${stashed ? ' is-stashed' : ''}" data-game-id="${gid(game.id)}" style="--i:${i}">
                     <div class="tile-art" style="background-image:url('${esc(game.thumbnail)}')">
                         <span class="chip chip-store">${esc(chipText(game))}</span>
                         ${stashed ? claimedChip : ''}
@@ -357,7 +374,7 @@
             const onText = stashedOnText(game);
             const was = worthText(game.worth_inr);
             return `
-                <article class="tile is-stashed" data-game-id="${game.id}" style="--i:${i}">
+                <article class="tile is-stashed" data-game-id="${gid(game.id)}" style="--i:${i}">
                     <div class="tile-art" style="background-image:url('${esc(game.thumbnail)}')">
                         <span class="chip chip-store">${esc(chipText(game))}</span>
                         ${claimedChip}
@@ -365,7 +382,7 @@
                     <div class="tile-body">
                         <h3 class="tile-title">${esc(displayTitle(game))}</h3>
                         <p class="stashed-on">${onText ? 'Stashed ' + onText : ''}${was ? (onText ? ', list price ' : 'List price ') + was : ''}</p>
-                        <div class="tile-actions"><button class="btn btn-quiet" data-action="open" data-game-id="${game.id}">Open ${store ? store.label : 'store'}</button></div>
+                        <div class="tile-actions"><button class="btn btn-quiet" data-action="open" data-game-id="${gid(game.id)}">Open ${store ? store.label : 'store'}</button></div>
                     </div>
                 </article>`;
         }
@@ -378,10 +395,10 @@
             const state = frac === null ? ' is-open' : (d <= 2 ? ' is-urgent' : '');
             const desc = String(game.description || '').trim();
             const action = stashed
-                ? `<button class="btn btn-quiet btn-lg" data-action="open" data-game-id="${game.id}">Open ${store ? store.label : 'store'}</button>`
-                : `<button class="btn btn-blue btn-lg" data-action="claim" data-game-id="${game.id}">Claim${store ? ' on ' + store.label : ''}</button>`;
+                ? `<button class="btn btn-quiet btn-lg" data-action="open" data-game-id="${gid(game.id)}">Open ${store ? store.label : 'store'}</button>`
+                : `<button class="btn btn-blue btn-lg" data-action="claim" data-game-id="${gid(game.id)}">Claim${store ? ' on ' + store.label : ''}</button>`;
             return `
-                <article class="spotlight" data-game-id="${game.id}">
+                <article class="spotlight" data-game-id="${gid(game.id)}">
                     <div class="spotlight-art" style="background-image:url('${esc(game.image || game.thumbnail)}')"></div>
                     <div class="spotlight-body">
                         <div class="spotlight-tags">
@@ -400,8 +417,10 @@
                     </div>
                 </article>`;
         }
+        // Escapes its own text so callers cannot forget to; `cta` is trusted
+        // markup supplied by this file, never by API or user data.
         function noteHTML(title, body, cta) {
-            return `<div class="table-note"><h3>${title}</h3><p>${body}</p>${cta || ''}</div>`;
+            return `<div class="table-note"><h3>${esc(title)}</h3><p>${esc(body)}</p>${cta || ''}</div>`;
         }
 
         // ─── Rendering: the table ───────────────────────────────────────────
@@ -439,7 +458,7 @@
             }
             if (list.length === 0) {
                 featuredEl.innerHTML = '';
-                grid.innerHTML = noteHTML('No games match', searchQuery ? `Nothing on the table is called “${esc(searchQuery)}”.` : 'Nothing free on this store right now.');
+                grid.innerHTML = noteHTML('No games match', searchQuery ? `Nothing on the table is called “${searchQuery}”.` : 'Nothing free on this store right now.');
                 return;
             }
 
@@ -476,7 +495,7 @@
             const list = claimedGames.filter((g) => !q || (g.title || '').toLowerCase().includes(q));
             grid.innerHTML = list.length
                 ? list.map(stashTileHTML).join('')
-                : noteHTML('No games match', `Nothing in your stash is called “${esc(searchQuery)}”.`);
+                : noteHTML('No games match', `Nothing in your stash is called “${searchQuery}”.`);
         }
         function updateLibraryCount() {
             $('library-count').textContent = claimedGames.length || '';
@@ -559,7 +578,7 @@
                     pendingGameClaim = null;
                     closeModal('claim-verify');
                     rerender();
-                    document.querySelectorAll(`[data-game-id="${game.id}"] .chip-claimed`).forEach((s) => s.classList.add('is-fresh'));
+                    document.querySelectorAll(`[data-game-id="${gid(game.id)}"] .chip-claimed`).forEach((s) => s.classList.add('is-fresh'));
                     showToast(displayTitle(game) + ' added to your stash');
                 } else {
                     showToast('Couldn’t add it to your stash. Try again.');
@@ -824,7 +843,7 @@
             $('recent-see-all').hidden = recent.length === 0;
             $('recent-row').innerHTML = recent.length
                 ? recent.map((g) => `
-                    <button class="recent" data-action="open" data-game-id="${g.id}" title="Open ${esc(chipText(g))}">
+                    <button class="recent" data-action="open" data-game-id="${gid(g.id)}" title="Open ${esc(chipText(g))}">
                         <span class="recent-art" style="background-image:url('${esc(g.thumbnail)}')"></span>
                         <span class="recent-title">${esc(displayTitle(g))}</span>
                         <span class="recent-when">${esc(stashedOnText(g) || chipText(g))}</span>

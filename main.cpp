@@ -4,6 +4,7 @@
 #include <sstream>
 #include <fstream>
 #include <cctype>
+#include <cstring>
 #include <cstdint>
 #include <chrono>
 #include <thread>
@@ -22,9 +23,11 @@ using json = nlohmann::json;
 #include <shlobj.h>
 #include <winhttp.h>
 #include <wincrypt.h>
+#include <bcrypt.h>
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "crypt32.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "bcrypt.lib")
 
 // SQLite
 #include <sqlite3.h>
@@ -41,7 +44,49 @@ void init_debug_log(const std::string& dir) {
     }
 }
 
-void debug_log(const std::string& msg) {
+// Masks values that must never land in a log file that ships with the app:
+// OAuth codes/tokens, client secrets, CSRF state and e-mail addresses.
+std::string redact_sensitive(const std::string& in) {
+    static const char* kKeys[] = {"code", "access_token", "refresh_token", "id_token",
+                                  "client_secret", "state", "code_verifier"};
+    std::string out = in;
+    for (const char* key : kKeys) {
+        const std::string needle = std::string(key) + "=";
+        size_t pos = 0;
+        while ((pos = out.find(needle, pos)) != std::string::npos) {
+            // Only treat it as a parameter when preceded by ? & or start-of-string.
+            if (pos != 0 && out[pos - 1] != '?' && out[pos - 1] != '&' && out[pos - 1] != ' ') {
+                pos += needle.size();
+                continue;
+            }
+            const size_t vstart = pos + needle.size();
+            size_t vend = out.find_first_of("&\r\n \"", vstart);
+            if (vend == std::string::npos) vend = out.size();
+            if (vend > vstart) out.replace(vstart, vend - vstart, "[redacted]");
+            pos = vstart + 10;
+        }
+    }
+    // Mask the local part of anything that looks like an e-mail address.
+    size_t at = 0;
+    while ((at = out.find('@', at)) != std::string::npos) {
+        size_t start = at;
+        while (start > 0) {
+            const unsigned char c = out[start - 1];
+            if (std::isalnum(c) || c == '.' || c == '_' || c == '-' || c == '+') start--;
+            else break;
+        }
+        if (at > start) {
+            out.replace(start, at - start, "[email]");
+            at = start + 7 + 1;
+        } else {
+            at++;
+        }
+    }
+    return out;
+}
+
+void debug_log(const std::string& raw) {
+    const std::string msg = redact_sensitive(raw);
     if (g_debug_log.is_open()) {
         g_debug_log << "[" << std::chrono::system_clock::now().time_since_epoch().count() << "] " << msg << '\n';
         g_debug_log.flush();
@@ -62,6 +107,7 @@ std::atomic<bool> g_oauth_server_running{false};
 std::mutex g_oauth_mutex;               // guards the two fields below
 std::string g_oauth_expected_provider;  // provider of the most recent login attempt
 std::string g_oauth_expected_state;     // CSRF token sent with that attempt
+std::string g_oauth_code_verifier;      // PKCE verifier for that attempt (RFC 7636)
 
 // ─── SHA-256 Password Hashing (Windows CryptoAPI) ─────────────────────────────
 std::string sha256_hex(const std::string& input, const std::string& salt = "") {
@@ -96,15 +142,227 @@ std::string sha256_hex(const std::string& input, const std::string& salt = "") {
     return result;
 }
 
-// ─── Random State Generator for OAuth ─────────────────────────────────────────
-std::string generate_random_state() {
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> dis(0, 15);
-    const char hex[] = "0123456789abcdef";
-    std::string result(32, '0');
-    for (auto& c : result) c = hex[dis(gen)];
-    return result;
+// ─── Cryptographic randomness ─────────────────────────────────────────────────
+// mt19937 is predictable from its output and must not generate CSRF tokens,
+// PKCE verifiers or password salts; BCryptGenRandom is the OS CSPRNG.
+bool secure_random_bytes(unsigned char* out, size_t len) {
+    return BCRYPT_SUCCESS(BCryptGenRandom(nullptr, out, (ULONG)len,
+                                          BCRYPT_USE_SYSTEM_PREFERRED_RNG));
+}
+
+std::string secure_random_hex(size_t byte_count) {
+    std::vector<unsigned char> buf(byte_count);
+    if (!secure_random_bytes(buf.data(), buf.size())) return "";
+    static const char hex[] = "0123456789abcdef";
+    std::string out;
+    out.reserve(byte_count * 2);
+    for (unsigned char b : buf) { out += hex[b >> 4]; out += hex[b & 0x0F]; }
+    return out;
+}
+
+std::string generate_random_state() { return secure_random_hex(16); }
+
+// ─── PBKDF2-HMAC-SHA256 password hashing ──────────────────────────────────────
+// Plain SHA-256 is a fast hash: a GPU tries billions of candidates per second.
+// PBKDF2 makes each guess deliberately expensive. Iteration count is stored per
+// row so it can be raised later without locking existing users out.
+constexpr uint32_t kPbkdf2Iterations = 310000;
+constexpr const char* kAlgoPbkdf2 = "pbkdf2-sha256";
+constexpr const char* kAlgoLegacy = "sha256";
+
+std::string pbkdf2_sha256_hex(const std::string& password, const std::string& salt,
+                              uint32_t iterations) {
+    BCRYPT_ALG_HANDLE alg = nullptr;
+    if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr,
+                                                    BCRYPT_ALG_HANDLE_HMAC_FLAG))) {
+        return "";
+    }
+    unsigned char derived[32] = {0};
+    const NTSTATUS st = BCryptDeriveKeyPBKDF2(
+        alg,
+        (PUCHAR)password.data(), (ULONG)password.size(),
+        (PUCHAR)salt.data(), (ULONG)salt.size(),
+        iterations, derived, sizeof(derived), 0);
+    BCryptCloseAlgorithmProvider(alg, 0);
+    if (!BCRYPT_SUCCESS(st)) return "";
+
+    static const char hex[] = "0123456789abcdef";
+    std::string out;
+    out.reserve(sizeof(derived) * 2);
+    for (unsigned char b : derived) { out += hex[b >> 4]; out += hex[b & 0x0F]; }
+    return out;
+}
+
+// Compares without leaking where the first difference is via timing.
+bool constant_time_equals(const std::string& a, const std::string& b) {
+    if (a.size() != b.size() || a.empty()) return false;
+    unsigned char diff = 0;
+    for (size_t i = 0; i < a.size(); i++) diff |= (unsigned char)(a[i] ^ b[i]);
+    return diff == 0;
+}
+
+// ─── URL safety ───────────────────────────────────────────────────────────────
+// Everything reaching ShellExecute or webview navigation originates in the
+// WebView (ultimately from a third-party API), so only plain http(s) is allowed.
+// This blocks file://, UNC paths, javascript: and arbitrary registered handlers.
+bool is_safe_web_url(const std::string& url) {
+    if (url.size() < 8 || url.size() > 2000) return false;
+    auto starts_with_ci = [&url](const char* prefix) {
+        const size_t n = strlen(prefix);
+        if (url.size() < n) return false;
+        for (size_t i = 0; i < n; i++)
+            if (std::tolower((unsigned char)url[i]) != (unsigned char)prefix[i]) return false;
+        return true;
+    };
+    if (!starts_with_ci("http://") && !starts_with_ci("https://")) return false;
+    // Reject control characters, quotes and whitespace that could break out of
+    // the surrounding command, attribute or header.
+    for (unsigned char c : url) {
+        if (c < 0x21 || c == 0x7F || c == '"' || c == '\'' || c == '<' || c == '>' || c == '\\')
+            return false;
+    }
+    // A bare "http://" with no host, or an embedded credential, is not expected here.
+    const size_t host_start = url.find("//") + 2;
+    if (host_start >= url.size() || url[host_start] == '/') return false;
+    return true;
+}
+
+// ─── PKCE helpers (RFC 7636) ──────────────────────────────────────────────────
+std::string sha256_raw(const std::string& input) {
+    HCRYPTPROV prov = 0;
+    HCRYPTHASH hash = 0;
+    std::string out;
+    if (!CryptAcquireContextW(&prov, nullptr, nullptr, PROV_RSA_AES, CRYPT_VERIFYCONTEXT)) return out;
+    if (!CryptCreateHash(prov, CALG_SHA_256, 0, 0, &hash)) { CryptReleaseContext(prov, 0); return out; }
+    if (CryptHashData(hash, reinterpret_cast<const BYTE*>(input.data()), (DWORD)input.size(), 0)) {
+        BYTE digest[32];
+        DWORD len = sizeof(digest);
+        if (CryptGetHashParam(hash, HP_HASHVAL, digest, &len, 0))
+            out.assign(reinterpret_cast<char*>(digest), len);
+    }
+    CryptDestroyHash(hash);
+    CryptReleaseContext(prov, 0);
+    return out;
+}
+
+std::string base64url_encode(const std::string& in) {
+    static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    std::string out;
+    out.reserve(((in.size() + 2) / 3) * 4);
+    for (size_t i = 0; i < in.size(); i += 3) {
+        const unsigned b0 = (unsigned char)in[i];
+        const unsigned b1 = (i + 1 < in.size()) ? (unsigned char)in[i + 1] : 0;
+        const unsigned b2 = (i + 2 < in.size()) ? (unsigned char)in[i + 2] : 0;
+        out += tbl[b0 >> 2];
+        out += tbl[((b0 & 0x03) << 4) | (b1 >> 4)];
+        if (i + 1 < in.size()) out += tbl[((b1 & 0x0F) << 2) | (b2 >> 6)];
+        if (i + 2 < in.size()) out += tbl[b2 & 0x3F];
+    }
+    return out;  // no '=' padding, per RFC 7636
+}
+
+std::string base64_std_encode(const std::string& in) {
+    static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve(((in.size() + 2) / 3) * 4);
+    size_t i = 0;
+    for (; i + 2 < in.size(); i += 3) {
+        const unsigned v = ((unsigned char)in[i] << 16) | ((unsigned char)in[i + 1] << 8) |
+                            (unsigned char)in[i + 2];
+        out += tbl[(v >> 18) & 0x3F]; out += tbl[(v >> 12) & 0x3F];
+        out += tbl[(v >> 6) & 0x3F];  out += tbl[v & 0x3F];
+    }
+    if (i < in.size()) {
+        unsigned v = (unsigned char)in[i] << 16;
+        const bool two = (i + 1 < in.size());
+        if (two) v |= (unsigned char)in[i + 1] << 8;
+        out += tbl[(v >> 18) & 0x3F];
+        out += tbl[(v >> 12) & 0x3F];
+        out += two ? tbl[(v >> 6) & 0x3F] : '=';
+        out += '=';
+    }
+    return out;
+}
+
+std::wstring utf8_to_wide(const std::string& in) {
+    if (in.empty()) return std::wstring();
+    const int need = MultiByteToWideChar(CP_UTF8, 0, in.data(), (int)in.size(), nullptr, 0);
+    if (need <= 0) return std::wstring();
+    std::wstring out((size_t)need, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, in.data(), (int)in.size(), &out[0], need);
+    return out;
+}
+
+// ─── Toast notification ───────────────────────────────────────────────────────
+// The title and message come from the WebView, so they are passed as environment
+// variables and never interpolated into a command line. The script itself is a
+// fixed constant handed over as -EncodedCommand, so there is no quoting to get
+// wrong in cmd.exe or PowerShell, and no cmd.exe in the chain at all.
+void show_toast_notification(const std::string& title, const std::string& message) {
+    static const char* kScript =
+        "$ErrorActionPreference='Stop';"
+        "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null;"
+        "$t=[System.Security.SecurityElement]::Escape($env:GS_TOAST_TITLE);"
+        "$m=[System.Security.SecurityElement]::Escape($env:GS_TOAST_MSG);"
+        "$x=New-Object Windows.Data.Xml.Dom.XmlDocument;"
+        "$x.LoadXml(\"<toast><visual><binding template='ToastText02'>\" +"
+        "\"<text id='1'>$t</text><text id='2'>$m</text>\" +"
+        "\"</binding></visual></toast>\");"
+        "$toast=New-Object Windows.UI.Notifications.ToastNotification $x;"
+        "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('GameStash').Show($toast)";
+
+    // -EncodedCommand expects base64 of the UTF-16LE script bytes.
+    const std::wstring wscript = utf8_to_wide(kScript);
+    std::string raw;
+    raw.reserve(wscript.size() * 2);
+    for (wchar_t ch : wscript) {
+        raw += (char)(ch & 0xFF);
+        raw += (char)((ch >> 8) & 0xFF);
+    }
+    std::wstring cmd = L"powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden "
+                       L"-EncodedCommand " + utf8_to_wide(base64_std_encode(raw));
+
+    // Child environment = ours plus the two toast variables.
+    std::wstring env;
+    if (LPWCH parent = GetEnvironmentStringsW()) {
+        for (LPWCH v = parent; *v; ) {
+            const size_t n = wcslen(v);
+            // Drop any inherited copies so the caller cannot smuggle a value in.
+            if (_wcsnicmp(v, L"GS_TOAST_TITLE=", 15) != 0 &&
+                _wcsnicmp(v, L"GS_TOAST_MSG=", 13) != 0) {
+                env.append(v, n);
+                env.push_back(L'\0');
+            }
+            v += n + 1;
+        }
+        FreeEnvironmentStringsW(parent);
+    }
+    auto sanitize = [](const std::string& in) {
+        std::string out;
+        for (char c : in) if ((unsigned char)c >= 0x20 && c != 0x7F) out += c;
+        return out.size() > 512 ? out.substr(0, 512) : out;
+    };
+    env += L"GS_TOAST_TITLE=" + utf8_to_wide(sanitize(title)); env.push_back(L'\0');
+    env += L"GS_TOAST_MSG="   + utf8_to_wide(sanitize(message)); env.push_back(L'\0');
+    env.push_back(L'\0');
+
+    STARTUPINFOW si = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi = {};
+    std::vector<wchar_t> mutable_cmd(cmd.begin(), cmd.end());
+    mutable_cmd.push_back(L'\0');
+
+    if (CreateProcessW(nullptr, mutable_cmd.data(), nullptr, nullptr, FALSE,
+                       CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+                       (LPVOID)env.data(), nullptr, &si, &pi)) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    } else {
+        debug_log("[WARN] toast notification could not be launched: " +
+                  std::to_string(GetLastError()));
+    }
 }
 
 // ─── Email Validation ─────────────────────────────────────────────────────────
@@ -156,12 +414,22 @@ std::string url_encode(const std::string& s) {
 
 // ─── SQLite Helpers ───────────────────────────────────────────────────────────
 bool db_init() {
-    int rc = sqlite3_open(g_db_path.c_str(), &g_db);
+    // open_v2 states the intent explicitly rather than relying on defaults.
+    int rc = sqlite3_open_v2(g_db_path.c_str(), &g_db,
+                             SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
     if (rc != SQLITE_OK) {
         debug_log("Cannot open database: " + std::string(sqlite3_errmsg(g_db)));
         return false;
     }
     debug_log("Database opened successfully at: " + g_db_path);
+
+    // WAL survives a hard kill far better than the default rollback journal, and
+    // foreign_keys defaults to OFF in SQLite - without it the FOREIGN KEY clause
+    // declared on claimed_games below is silently inert.
+    sqlite3_exec(g_db, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);
+    sqlite3_exec(g_db, "PRAGMA synchronous=NORMAL;", nullptr, nullptr, nullptr);
+    sqlite3_exec(g_db, "PRAGMA foreign_keys=ON;", nullptr, nullptr, nullptr);
+    sqlite3_exec(g_db, "PRAGMA busy_timeout=5000;", nullptr, nullptr, nullptr);
 
     const char* sql = R"(
         CREATE TABLE IF NOT EXISTS users (
@@ -204,8 +472,11 @@ bool db_init() {
         return false;
     }
 
-    // Migration: ensure password_salt column exists
+    // Migrations. These fail harmlessly when the column already exists.
     sqlite3_exec(g_db, "ALTER TABLE users ADD COLUMN password_salt TEXT;", nullptr, nullptr, nullptr);
+    // Which KDF produced password_hash, so legacy rows can be upgraded on login.
+    sqlite3_exec(g_db, "ALTER TABLE users ADD COLUMN password_algo TEXT;", nullptr, nullptr, nullptr);
+    sqlite3_exec(g_db, "ALTER TABLE users ADD COLUMN password_iterations INTEGER;", nullptr, nullptr, nullptr);
 
     debug_log("Database initialized OK");
     return true;
@@ -433,11 +704,17 @@ void run_oauth_callback_server(webview::webview* w) {
         const std::string code = req.get_param_value("code");
         const std::string state = req.get_param_value("state");
 
-        std::string expected_provider, expected_state;
+        std::string expected_provider, expected_state, code_verifier;
         {
             std::lock_guard<std::mutex> lock(g_oauth_mutex);
             expected_provider = g_oauth_expected_provider;
             expected_state = g_oauth_expected_state;
+            code_verifier = g_oauth_code_verifier;
+            // One login attempt per authorization: clear immediately so a replayed
+            // or duplicated callback cannot be accepted a second time.
+            g_oauth_expected_provider.clear();
+            g_oauth_expected_state.clear();
+            g_oauth_code_verifier.clear();
         }
 
         json result;
@@ -450,11 +727,16 @@ void run_oauth_callback_server(webview::webview* w) {
         } else {
             const bool is_google = provider == "google";
             const json cfg = g_oauth_config.value(provider, json::object());
-            const std::string body = "code=" + url_encode(code)
+            std::string body = "code=" + url_encode(code)
                 + "&client_id=" + url_encode(cfg.value("client_id", ""))
-                + "&client_secret=" + url_encode(cfg.value("client_secret", ""))
                 + "&redirect_uri=" + url_encode(cfg.value("redirect_uri", ""))
-                + "&grant_type=authorization_code";
+                + "&grant_type=authorization_code"
+                + "&code_verifier=" + url_encode(code_verifier);
+            // Only sent when the deployment still has a confidential client
+            // configured; with PKCE in play it is no longer required.
+            const std::string client_secret = cfg.value("client_secret", "");
+            if (!client_secret.empty())
+                body += "&client_secret=" + url_encode(client_secret);
             const char* token_url = is_google ? "https://oauth2.googleapis.com/token"
                                               : "https://discord.com/api/oauth2/token";
             const char* userinfo_url = is_google ? "https://www.googleapis.com/oauth2/v2/userinfo"
@@ -527,7 +809,9 @@ void run_oauth_callback_server(webview::webview* w) {
                 <p>You can close this window and return to Game Stash.</p>
                 </body></html>)", "text/html");
 
-            std::string js = "handleOAuthResult(" + result.dump() + ");";
+            // ensure_ascii escapes every non-ASCII character, including U+2028 and
+            // U+2029, which are legal in JSON strings but terminate a JS line.
+            std::string js = "handleOAuthResult(" + result.dump(-1, ' ', true) + ");";
             w->dispatch([w, js]() { w->eval(js); });
         }
 
@@ -619,16 +903,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     w.bind("fetchGiveaways", [&](const std::string&) -> std::string {
         debug_log("fetchGiveaways called");
         try {
-            httplib::Client cli("http://www.gamerpower.com");
-            cli.set_follow_location(true);
-            cli.set_connection_timeout(10, 0);
-            cli.set_read_timeout(10, 0);
-            httplib::Headers headers = {{"User-Agent", "Mozilla/5.0"}};
-            auto res = cli.Get("/api/giveaways", headers);
-            if (!res) return json({{"error", "No response from API"}}).dump();
-            if (res->status != 200) return json({{"error", "HTTP " + std::to_string(res->status)}}).dump();
+            // Over plain HTTP any network attacker could rewrite these titles and
+            // URLs, which then flow into the UI and into ShellExecute.
+            const std::string body = winhttp_get("https://www.gamerpower.com/api/giveaways");
+            if (body.empty()) return json({{"error", "No response from API"}}).dump();
 
-            json response_json = json::parse(res->body);
+            json response_json = json::parse(body, nullptr, false);
+            if (!response_json.is_array())
+                return json({{"error", "Unexpected API response"}}).dump();
             json filtered = json::array();
             for (const auto& item : response_json) {
                 std::string platforms = item.value("platforms", "N/A");
@@ -656,6 +938,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             json args = json::parse(req);
             if (args.is_array() && args.size() > 0) {
                 std::string url = args[0].get<std::string>();
+                if (!is_safe_web_url(url)) {
+                    debug_log("navigateToUrl: rejected non-http(s) target");
+                    return json({{"success", false}, {"error", "Unsupported URL"}}).dump();
+                }
                 debug_log("navigateToUrl: " + url);
                 w.dispatch([&w, url]() { w.navigate(url); });
                 return json({{"success", true}}).dump();
@@ -694,33 +980,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         try {
             json args = json::parse(req);
             if (args.is_array() && args.size() >= 2) {
-                std::string title = args[0].get<std::string>();
-                std::string message = args[1].get<std::string>();
-
-                // Security: Escape single quotes for PowerShell to prevent command injection
-                auto escape_ps = [](const std::string& s) {
-                    std::string res;
-                    for (char c : s) {
-                        if (c == '\'') res += "''";
-                        else if (c == '\"') res += "`\"";
-                        else if (c == '`') res += "``";
-                        else res += c;
-                    }
-                    return res;
-                };
-
-                std::string e_title = escape_ps(title);
-                std::string e_message = escape_ps(message);
-
-                std::string cmd = "powershell -WindowStyle Hidden -Command \""
-                    "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; "
-                    "$APP_ID = 'GameStash'; "
-                    "$template = @\\\"<toast><visual><binding template='ToastText02'><text id='1'>" + e_title + "</text><text id='2'>" + e_message + "</text></binding></visual></toast>\\\"; "
-                    "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument; "
-                    "$xml.LoadXml($template); "
-                    "$toast = New-Object Windows.UI.Notifications.ToastNotification $xml; "
-                    "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($APP_ID).Show($toast)\"";
-                std::thread([cmd]() { system(cmd.c_str()); }).detach();
+                const std::string title   = args[0].get<std::string>();
+                const std::string message = args[1].get<std::string>();
+                // Escaping quotes was not enough: the old here-string expanded
+                // $(...) subexpressions, so a crafted title could run commands.
+                std::thread([title, message]() {
+                    show_toast_notification(title, message);
+                }).detach();
             }
         } catch (const std::exception& e) {
             debug_log("sendNotification: bad args: " + std::string(e.what()));
@@ -737,6 +1003,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
             std::string url = args[0].get<std::string>();
             std::string platforms = args.size() > 1 ? args[1].get<std::string>() : "";
+            if (!is_safe_web_url(url)) {
+                debug_log("openSystemBrowser: rejected non-http(s) target");
+                return json({{"success", false}, {"error", "Unsupported URL"}}).dump();
+            }
             bool opened = false;
 
             if (platforms.find("Steam") != std::string::npos && is_protocol_registered("steam")) {
@@ -785,11 +1055,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             if (!is_valid_email(email))
                 return json({{"error", "Invalid email format"}}).dump();
 
-            // Generate a random salt
-            std::string salt = generate_random_state();
-            std::string hash = sha256_hex(password, salt);
+            // Salt from the OS CSPRNG, then a deliberately slow KDF.
+            std::string salt = secure_random_hex(16);
+            if (salt.empty())
+                return json({{"error", "Could not generate a secure salt"}}).dump();
+            std::string hash = pbkdf2_sha256_hex(password, salt, kPbkdf2Iterations);
+            if (hash.empty())
+                return json({{"error", "Password hashing failed"}}).dump();
 
-            const char* sql = "INSERT INTO users (username, email, password_hash, password_salt, provider) VALUES (?, ?, ?, ?, 'local')";
+            const char* sql = "INSERT INTO users (username, email, password_hash, password_salt, password_algo, password_iterations, provider) VALUES (?, ?, ?, ?, ?, ?, 'local')";
             sqlite3_stmt* stmt = nullptr;
             if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK)
                 return json({{"error", "DB error"}}).dump();
@@ -798,6 +1072,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             sqlite3_bind_text(stmt, 2, email.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt, 3, hash.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt, 4, salt.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 5, kAlgoPbkdf2, -1, SQLITE_STATIC);
+            sqlite3_bind_int(stmt, 6, (int)kPbkdf2Iterations);
             int rc = sqlite3_step(stmt);
             sqlite3_finalize(stmt);
 
@@ -838,31 +1114,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             if (!is_valid_email(email))
                 return json({{"error", "Invalid email format"}}).dump();
 
-            // First, get the salt for this email
-            std::string salt;
-            const char* salt_sql = "SELECT password_salt FROM users WHERE email=?";
-            sqlite3_stmt* salt_stmt = nullptr;
-            if (sqlite3_prepare_v2(g_db, salt_sql, -1, &salt_stmt, nullptr) == SQLITE_OK) {
-                sqlite3_bind_text(salt_stmt, 1, email.c_str(), -1, SQLITE_TRANSIENT);
-                if (sqlite3_step(salt_stmt) == SQLITE_ROW) {
-                    salt = column_str(salt_stmt, 0);
-                }
-                sqlite3_finalize(salt_stmt);
-            }
-
-            std::string hash = sha256_hex(password, salt);
-
-            const char* sql = "SELECT id, username, email, provider, avatar_url, bio, country, favorite_platform FROM users WHERE email=? AND password_hash=?";
+            // Fetch the stored credential and verify it here, rather than matching
+            // the hash inside the SQL. That allows a legacy row to be re-hashed
+            // with the current KDF the first time its owner signs in.
+            const char* sql = "SELECT id, username, email, provider, avatar_url, bio, country, "
+                              "favorite_platform, password_hash, password_salt, password_algo, "
+                              "password_iterations FROM users WHERE email=?";
             sqlite3_stmt* stmt = nullptr;
             if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK)
                 return json({{"error", "DB error"}}).dump();
-
             sqlite3_bind_text(stmt, 1, email.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt, 2, hash.c_str(), -1, SQLITE_TRANSIENT);
 
             json user;
+            std::string stored_hash, salt, algo;
+            int iterations = 0;
+            int user_db_id = -1;
             if (sqlite3_step(stmt) == SQLITE_ROW) {
-                int user_db_id = sqlite3_column_int(stmt, 0);
+                user_db_id = sqlite3_column_int(stmt, 0);
                 user["db_id"] = user_db_id;
                 user["id"] = user_db_id;
                 user["name"] = column_str(stmt, 1);
@@ -872,10 +1140,49 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 user["bio"] = column_str(stmt, 5);
                 user["country"] = column_str(stmt, 6);
                 user["favorite_platform"] = column_str(stmt, 7);
+                stored_hash = column_str(stmt, 8);
+                salt        = column_str(stmt, 9);
+                algo        = column_str(stmt, 10);
+                iterations  = sqlite3_column_int(stmt, 11);
             }
             sqlite3_finalize(stmt);
 
-            if (user.empty()) return json({{"error", "Invalid email or password"}}).dump();
+            // Same generic message whether the address is unknown or the password
+            // is wrong, so this cannot be used to enumerate registered accounts.
+            const char* kBadCreds = "Invalid email or password";
+            if (user.empty() || stored_hash.empty())
+                return json({{"error", kBadCreds}}).dump();
+
+            const bool legacy = (algo.empty() || algo == kAlgoLegacy);
+            const std::string candidate = legacy
+                ? sha256_hex(password, salt)
+                : pbkdf2_sha256_hex(password, salt,
+                                    iterations > 0 ? (uint32_t)iterations : kPbkdf2Iterations);
+            if (candidate.empty() || !constant_time_equals(candidate, stored_hash))
+                return json({{"error", kBadCreds}}).dump();
+
+            if (legacy) {
+                // Correct password against an old SHA-256 row: transparently
+                // migrate it to PBKDF2 with a fresh salt.
+                const std::string new_salt = secure_random_hex(16);
+                const std::string new_hash = new_salt.empty() ? std::string()
+                    : pbkdf2_sha256_hex(password, new_salt, kPbkdf2Iterations);
+                if (!new_hash.empty()) {
+                    const char* upd = "UPDATE users SET password_hash=?, password_salt=?, "
+                                      "password_algo=?, password_iterations=? WHERE id=?";
+                    sqlite3_stmt* ustmt = nullptr;
+                    if (sqlite3_prepare_v2(g_db, upd, -1, &ustmt, nullptr) == SQLITE_OK) {
+                        sqlite3_bind_text(ustmt, 1, new_hash.c_str(), -1, SQLITE_TRANSIENT);
+                        sqlite3_bind_text(ustmt, 2, new_salt.c_str(), -1, SQLITE_TRANSIENT);
+                        sqlite3_bind_text(ustmt, 3, kAlgoPbkdf2, -1, SQLITE_STATIC);
+                        sqlite3_bind_int(ustmt, 4, (int)kPbkdf2Iterations);
+                        sqlite3_bind_int(ustmt, 5, user_db_id);
+                        sqlite3_step(ustmt);
+                        sqlite3_finalize(ustmt);
+                        debug_log("Upgraded a stored password to PBKDF2");
+                    }
+                }
+            }
 
             return json({{"success", true}, {"user", user}}).dump();
         } catch (const std::exception& e) {
@@ -900,6 +1207,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 return json({{"error", "OAuth is not configured for " + provider}}).dump();
 
             std::string state = generate_random_state();
+            if (state.empty())
+                return json({{"error", "Could not generate a secure state token"}}).dump();
+
+            // PKCE (RFC 7636). A desktop app cannot keep a client_secret secret,
+            // so the authorization code is bound to a one-time verifier that never
+            // leaves this process instead of relying on the shipped secret.
+            const std::string code_verifier = secure_random_hex(32);
+            if (code_verifier.empty())
+                return json({{"error", "Could not generate a PKCE verifier"}}).dump();
+            const std::string code_challenge = base64url_encode(sha256_raw(code_verifier));
+
             std::string auth_url = std::string(is_google
                     ? "https://accounts.google.com/o/oauth2/v2/auth?"
                     : "https://discord.com/api/oauth2/authorize?")
@@ -907,6 +1225,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 + "&redirect_uri=" + url_encode(cfg.value("redirect_uri", ""))
                 + "&response_type=code"
                 + "&scope=" + url_encode(is_google ? "openid email profile" : "identify email")
+                + "&code_challenge=" + url_encode(code_challenge)
+                + "&code_challenge_method=S256"
                 + "&state=" + state;
 
             // Record what the callback must match, then make sure a server is listening
@@ -914,6 +1234,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 std::lock_guard<std::mutex> lock(g_oauth_mutex);
                 g_oauth_expected_provider = provider;
                 g_oauth_expected_state = state;
+                g_oauth_code_verifier = code_verifier;
             }
             bool not_running = false;
             if (g_oauth_server_running.compare_exchange_strong(not_running, true)) {

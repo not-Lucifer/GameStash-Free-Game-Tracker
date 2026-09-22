@@ -1,0 +1,49 @@
+// Version resource for GameStash.
+//
+// An executable with an empty version resource shows as "Unknown publisher"
+// in the SmartScreen prompt and is a known heuristic signal for AV engines.
+// Keep the version here in sync with installer.iss (MyAppVersion).
+
+#include <winver.h>
+
+#define VER_MAJOR 1
+#define VER_MINOR 0
+#define VER_PATCH 1
+#define VER_BUILD 0
+#define VER_STRING "1.0.1.0"
+
+// Uncomment once an icon exists; an icon-less binary looks more suspicious.
+// 1 ICON "assets\gamestash.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION    VER_MAJOR,VER_MINOR,VER_PATCH,VER_BUILD
+ PRODUCTVERSION VER_MAJOR,VER_MINOR,VER_PATCH,VER_BUILD
+ FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+ FILEFLAGS      VS_FF_DEBUG
+#else
+ FILEFLAGS      0x0L
+#endif
+ FILEOS         VOS_NT_WINDOWS32
+ FILETYPE       VFT_APP
+ FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"   // US English, Unicode
+        BEGIN
+            VALUE "CompanyName",      "Aman Singh"
+            VALUE "FileDescription",  "Game Stash - Free Game Tracker"
+            VALUE "FileVersion",      VER_STRING
+            VALUE "InternalName",     "GameStash"
+            VALUE "LegalCopyright",   "Copyright (C) 2026 Aman Singh. MIT License."
+            VALUE "OriginalFilename", "GameStash.exe"
+            VALUE "ProductName",      "Game Stash"
+            VALUE "ProductVersion",   VER_STRING
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 0x04B0
+    END
+END

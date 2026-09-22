@@ -23,7 +23,9 @@ find_package(unofficial-sqlite3 CONFIG REQUIRED)
 set(ZSERGE_WEBVIEW_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/installed/x64-windows/include")
 
 # Create GUI application (no console window)
-add_executable(GameStash WIN32 main.cpp)
+# app.rc carries the version resource (publisher, product, version); an
+# executable with blank metadata shows as "Unknown publisher" in SmartScreen.
+add_executable(GameStash WIN32 main.cpp app.rc app.manifest)
 
 # Hide console window
 if (MSVC)
