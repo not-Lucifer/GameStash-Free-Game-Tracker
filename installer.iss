@@ -2,9 +2,11 @@
 ; Builds a proper Windows installer: Start Menu shortcut, optional Desktop
 ; shortcut, uninstaller in "Apps & features", and a Program Files install.
 ;
-; Requires Inno Setup 6: https://jrsoftware.org/isinfo.php
-; Build with: build_dist.bat first (to populate dist\GameStash-<ver>-win64),
-; then: "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+; Requires Inno Setup 6 or 7: https://jrsoftware.org/isinfo.php
+; Build with build_dist.bat: it builds the app, stages dist\GameStash-<ver>-win64
+; and then compiles this script, so the installer always packages that fresh
+; staging folder. Compiling this script by hand packages whatever is in dist\
+; at the time, which may be stale.
 
 #define MyAppName "Game Stash"
 ; Version is read from the built exe's ProductVersion, which comes from

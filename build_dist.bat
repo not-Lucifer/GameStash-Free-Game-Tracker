@@ -29,8 +29,38 @@ powershell -NoProfile -Command "Compress-Archive -Path '%DIST_DIR%\*' -Destinati
 
 echo Dist created: %DIST_DIR%
 echo Zip: %ROOT%dist\%DIST_NAME%.zip
+
+rem --- Installer --------------------------------------------------------------
+rem Compiled here, straight from the dist folder staged above, so the installer
+rem can never package stale files (compiling it by hand before re-running this
+rem script shipped an old index.html). Any setup left from an earlier run is
+rem deleted first, so a failed compile cannot leave an old one looking current.
+set "SETUP=%ROOT%dist\GameStash-%VERSION%-Setup.exe"
+if exist "%SETUP%" del /q "%SETUP%"
+
+rem ProgramFiles(x86) contains parentheses, which break a parenthesised block,
+rem so it is copied to a plain variable first.
+set "PF86=%ProgramFiles(x86)%"
+set "ISCC="
+for %%I in ("%ProgramFiles%\Inno Setup 7\ISCC.exe" "%PF86%\Inno Setup 7\ISCC.exe" "%LOCALAPPDATA%\Programs\Inno Setup 7\ISCC.exe" "%ProgramFiles%\Inno Setup 6\ISCC.exe" "%PF86%\Inno Setup 6\ISCC.exe" "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe") do (
+    if not defined ISCC if exist %%I set "ISCC=%%~I"
+)
+if not defined ISCC for %%I in (ISCC.exe) do set "ISCC=%%~$PATH:I"
+if not defined ISCC (
+    echo Inno Setup not found - installer skipped. Get it from https://jrsoftware.org/isinfo.php
+    exit /b 0
+)
+
+"%ISCC%" "/DMyAppVersion=%VERSION%" "%ROOT%installer.iss"
+if errorlevel 1 goto :setup_error
+if not exist "%SETUP%" goto :setup_error
+echo Installer: %SETUP%
 exit /b 0
 
 :error
 echo Build failed. Dist not created.
+exit /b 1
+
+:setup_error
+echo Installer compile failed. The dist folder and zip above are still valid.
 exit /b 1
