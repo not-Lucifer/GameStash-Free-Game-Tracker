@@ -15,6 +15,7 @@
 #include <vector>
 #include <random>
 #include <webview/webview.h>
+#include "resource.h"
 
 using json = nlohmann::json;
 
@@ -31,6 +32,8 @@ using json = nlohmann::json;
 
 // SQLite
 #include <sqlite3.h>
+
+#include "version.h"
 
 // Debug logging
 std::ofstream g_debug_log;
@@ -108,6 +111,12 @@ std::mutex g_oauth_mutex;               // guards the two fields below
 std::string g_oauth_expected_provider;  // provider of the most recent login attempt
 std::string g_oauth_expected_state;     // CSRF token sent with that attempt
 std::string g_oauth_code_verifier;      // PKCE verifier for that attempt (RFC 7636)
+
+// Update check state
+bool g_is_dev_build = false;              // running from the source tree's build folder
+std::atomic<bool> g_shutting_down{false}; // set once the message loop has returned
+std::mutex g_update_mutex;                // guards g_update_download_url
+std::string g_update_download_url;        // validated URL from the last successful check
 
 // ─── SHA-256 Password Hashing (Windows CryptoAPI) ─────────────────────────────
 std::string sha256_hex(const std::string& input, const std::string& salt = "") {
@@ -692,6 +701,148 @@ std::string column_str(sqlite3_stmt* stmt, int col) {
     return text ? reinterpret_cast<const char*>(text) : "";
 }
 
+// ─── Update check (GitHub Releases) ───────────────────────────────────────────
+// Releases live on GitHub. The check never downloads or runs anything itself:
+// the binaries are not code-signed yet, so there is nothing to verify a
+// download against. It only offers to open the release download in the
+// browser, where SmartScreen and the user stay in the loop.
+constexpr const char* kUpdateRepo = "not-Lucifer/GameStash-Free-Game-Tracker";
+
+struct SemVer {
+    int major = 0, minor = 0, patch = 0;
+    bool ok = false;
+};
+
+// Accepts "1.2.3", "v1.2.3" and "v1.2.3-beta"; any suffix after the numbers
+// is ignored for ordering. Missing minor/patch parts count as 0.
+SemVer parse_semver(const std::string& raw) {
+    SemVer v;
+    size_t i = 0;
+    if (i < raw.size() && (raw[i] == 'v' || raw[i] == 'V')) i++;
+    int* parts[3] = {&v.major, &v.minor, &v.patch};
+    int part = 0;
+    bool any_digit = false;
+    for (; i < raw.size() && part < 3; i++) {
+        const char c = raw[i];
+        if (c >= '0' && c <= '9') {
+            if (*parts[part] > 100000) return SemVer{};  // absurd, reject
+            *parts[part] = *parts[part] * 10 + (c - '0');
+            any_digit = true;
+        } else if (c == '.') {
+            if (!any_digit) return SemVer{};
+            part++;
+            any_digit = false;
+        } else {
+            break;  // start of a suffix such as "-beta"
+        }
+    }
+    v.ok = (part > 0 || any_digit);
+    return v;
+}
+
+int compare_semver(const SemVer& a, const SemVer& b) {
+    if (a.major != b.major) return a.major < b.major ? -1 : 1;
+    if (a.minor != b.minor) return a.minor < b.minor ? -1 : 1;
+    if (a.patch != b.patch) return a.patch < b.patch ? -1 : 1;
+    return 0;
+}
+
+// Only links that point back into this repository are ever offered to the
+// user, so a tampered or spoofed API response cannot redirect the download.
+bool is_own_release_url(const std::string& url) {
+    const std::string prefix = std::string("https://github.com/") + kUpdateRepo + "/releases/";
+    return url.compare(0, prefix.size(), prefix) == 0 && is_safe_web_url(url);
+}
+
+bool iends_with(const std::string& s, const std::string& suffix) {
+    if (suffix.size() > s.size()) return false;
+    for (size_t i = 0; i < suffix.size(); i++) {
+        if (std::tolower((unsigned char)s[s.size() - suffix.size() + i]) !=
+            std::tolower((unsigned char)suffix[i])) return false;
+    }
+    return true;
+}
+
+// Asks GitHub for the release list and reports the newest one.
+// Uses /releases rather than /releases/latest on purpose: /latest ignores
+// pre-releases, and every Game Stash release so far is marked as one.
+json check_for_update() {
+    json out;
+    out["current"] = GS_VERSION_STRING;
+    out["update_available"] = false;
+
+    const std::string url = std::string("https://api.github.com/repos/") + kUpdateRepo +
+                            "/releases?per_page=30";
+    const std::string body = winhttp_get(url, "X-GitHub-Api-Version: 2022-11-28\r\n");
+    if (body.empty()) {
+        out["error"] = "Could not reach GitHub";
+        return out;
+    }
+    const json releases = json::parse(body, nullptr, false);
+    if (!releases.is_array()) {
+        // Rate limiting (60 requests/hour per IP) and "Not Found" both arrive
+        // as an object carrying a message.
+        const json obj = parse_json_object(body);
+        out["error"] = obj.value("message", std::string("Unexpected response from GitHub"));
+        return out;
+    }
+
+    const SemVer current = parse_semver(GS_VERSION_STRING);
+    const json* best = nullptr;
+    SemVer best_ver;
+    for (const auto& r : releases) {
+        if (!r.is_object() || r.value("draft", false)) continue;
+        const auto tag = r.find("tag_name");
+        if (tag == r.end() || !tag->is_string()) continue;
+        const SemVer v = parse_semver(tag->get<std::string>());
+        if (!v.ok) continue;
+        if (!best || compare_semver(v, best_ver) > 0) {
+            best = &r;
+            best_ver = v;
+        }
+    }
+    if (!best) {
+        out["error"] = "No releases found";
+        return out;
+    }
+
+    const json& r = *best;
+    const std::string page_url = r.value("html_url", std::string());
+    std::string download_url, asset_name;
+    // Prefer the installer, then a portable zip; otherwise fall back to the page.
+    for (const char* wanted : {"-setup.exe", ".zip"}) {
+        const auto assets = r.find("assets");
+        if (assets == r.end() || !assets->is_array()) break;
+        for (const auto& a : *assets) {
+            if (!a.is_object()) continue;
+            const std::string name = a.value("name", std::string());
+            const std::string dl = a.value("browser_download_url", std::string());
+            if (iends_with(name, wanted) && is_own_release_url(dl)) {
+                download_url = dl;
+                asset_name = name;
+                break;
+            }
+        }
+        if (!download_url.empty()) break;
+    }
+    if (download_url.empty() && is_own_release_url(page_url)) download_url = page_url;
+
+    std::string notes = r.value("body", std::string());
+    if (notes.size() > 4000) notes = notes.substr(0, 4000) + "\n...";
+
+    out["latest"] = r.value("tag_name", std::string());
+    out["prerelease"] = r.value("prerelease", false);
+    out["published_at"] = r.value("published_at", std::string());
+    out["notes"] = notes;
+    out["asset_name"] = asset_name;
+    out["update_available"] = !download_url.empty() && compare_semver(best_ver, current) > 0;
+    {
+        std::lock_guard<std::mutex> lock(g_update_mutex);
+        g_update_download_url = out["update_available"].get<bool>() ? download_url : std::string();
+    }
+    return out;
+}
+
 // ─── OAuth: Local Callback Server ─────────────────────────────────────────────
 // Runs in a background thread and serves the provider's redirect. It verifies the
 // state token, exchanges the code for an access token, fetches the user profile,
@@ -842,6 +993,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
          ends_with(g_app_dir, "\\build\\Debug"))) {
         g_resource_dir = g_app_dir + "\\..";
     }
+    // Distribution builds run from their install folder; a dev build runs from
+    // build\ inside the source tree. Only distribution builds check for updates
+    // on their own (set GAMESTASH_UPDATE_CHECK=1 to test the check in dev).
+    g_is_dev_build = (g_resource_dir != g_app_dir);
 
     init_debug_log(g_resource_dir);
     debug_log("App Directory: " + g_app_dir);
@@ -892,6 +1047,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     w.set_title("Game Stash");
     w.set_size(1100, 750, WEBVIEW_HINT_NONE);
 
+    // zserge-webview registers its window class with IDI_APPLICATION (the generic
+    // Windows icon), so the embedded resource alone does not reach the title bar
+    // or taskbar. Set both sizes explicitly on the real HWND.
+    auto win_res = w.window();
+    if (win_res.ok()) {
+        HWND hwnd = static_cast<HWND>(win_res.value());
+        HINSTANCE hInst = GetModuleHandleW(nullptr);
+        HICON hIconBig = static_cast<HICON>(LoadImageW(
+            hInst, MAKEINTRESOURCEW(IDI_APPICON), IMAGE_ICON,
+            GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR));
+        HICON hIconSmall = static_cast<HICON>(LoadImageW(
+            hInst, MAKEINTRESOURCEW(IDI_APPICON), IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
+        if (hIconBig)   SendMessageW(hwnd, WM_SETICON, ICON_BIG,   reinterpret_cast<LPARAM>(hIconBig));
+        if (hIconSmall) SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(hIconSmall));
+    }
+
     // ─── Compute HTML path ───────────────────────────────────────────────────
     std::string html_file = g_resource_dir + "\\index.html";
     g_app_html_path = "file:///" + g_resource_dir + "/index.html";
@@ -911,22 +1083,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             json response_json = json::parse(body, nullptr, false);
             if (!response_json.is_array())
                 return json({{"error", "Unexpected API response"}}).dump();
-            json filtered = json::array();
+            // Every platform is passed through (Ubisoft Connect, EA, Battle.net,
+            // consoles, mobile, ...). Grouping by store is the UI's job, so a store
+            // GamerPower adds later shows up under "All" instead of vanishing here.
+            json giveaways = json::array();
             for (const auto& item : response_json) {
-                std::string platforms = item.value("platforms", "N/A");
-                bool ok = platforms.find("Steam") != std::string::npos ||
-                          platforms.find("Epic Games") != std::string::npos ||
-                          platforms.find("GOG") != std::string::npos ||
-                          platforms.find("Itch.io") != std::string::npos ||
-                          platforms.find("itchio") != std::string::npos ||
-                          platforms.find("Itchio") != std::string::npos;
-                if (!ok) continue;
+                if (!item.is_object()) continue;
                 json ni = item;
-                ni["worth_inr"] = get_worth_in_inr(item.value("worth", "N/A"));
-                filtered.push_back(ni);
+                const auto worth = item.find("worth");
+                ni["worth_inr"] = get_worth_in_inr(
+                    worth != item.end() && worth->is_string() ? worth->get<std::string>() : "N/A");
+                giveaways.push_back(std::move(ni));
             }
-            debug_log("Returning " + std::to_string(filtered.size()) + " giveaways");
-            return filtered.dump();
+            debug_log("Returning " + std::to_string(giveaways.size()) + " giveaways");
+            return giveaways.dump();
         } catch (const std::exception& e) {
             return json({{"error", e.what()}}).dump();
         }
@@ -1379,6 +1549,45 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
     });
 
+    // ─── Binding: checkForUpdate (async) ──────────────────────────────────────
+    // Arg: [manual]. Automatic checks are skipped in dev builds; a manual check
+    // from the menu always runs. The GitHub request runs on a worker thread so
+    // the window stays responsive; resolve() marshals the reply back.
+    w.bind("checkForUpdate", [&](const std::string& id, const std::string& req, void*) {
+        bool manual = false;
+        const json args = json::parse(req, nullptr, false);
+        if (args.is_array() && !args.empty() && args[0].is_boolean()) manual = args[0].get<bool>();
+
+        const char* force = std::getenv("GAMESTASH_UPDATE_CHECK");
+        const bool forced = force && std::string(force) == "1";
+        if (g_is_dev_build && !manual && !forced) {
+            w.resolve(id, 0, json({{"current", GS_VERSION_STRING}, {"skipped", "dev-build"}}).dump());
+            return;
+        }
+        std::thread([&w, id]() {
+            json result = check_for_update();
+            debug_log("Update check: current " + std::string(GS_VERSION_STRING) +
+                      ", latest " + result.value("latest", std::string("?")) +
+                      (result.value("update_available", false) ? " (update available)" : "") +
+                      (result.contains("error") ? " error: " + result.value("error", std::string()) : ""));
+            if (!g_shutting_down) w.resolve(id, 0, result.dump());
+        }).detach();
+    }, nullptr);
+
+    // ─── Binding: openUpdateDownload ──────────────────────────────────────────
+    // Takes no URL from the page: it opens only the link the last check found
+    // and validated, so script in the WebView cannot choose what gets opened.
+    w.bind("openUpdateDownload", [&](const std::string&) -> std::string {
+        std::string url;
+        {
+            std::lock_guard<std::mutex> lock(g_update_mutex);
+            url = g_update_download_url;
+        }
+        if (url.empty() || !is_own_release_url(url))
+            return json({{"success", false}, {"error", "No update to download"}}).dump();
+        return json({{"success", shell_open(url)}}).dump();
+    });
+
     // ─── Binding: updateUserProfile ───────────────────────────────────────────
     w.bind("updateUserProfile", [&](const std::string& req) -> std::string {
         try {
@@ -1460,6 +1669,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         w.navigate(g_app_html_path);
         debug_log("Navigation successful, starting message loop...");
         w.run();
+        g_shutting_down = true;  // detached workers must not resolve into a dead window
         debug_log("Message loop ended normally");
     } catch (const std::exception& e) {
         debug_log("ERROR: WebView crashed with exception: " + std::string(e.what()));

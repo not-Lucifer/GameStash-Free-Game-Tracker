@@ -2,7 +2,9 @@
 setlocal enableextensions
 
 set "ROOT=%~dp0"
-set "VERSION=1.0.1"
+rem Version comes from version.h (the trailing space skips GS_VERSION_STRING4)
+for /f "tokens=3" %%V in ('findstr /c:"#define GS_VERSION_STRING " "%ROOT%version.h"') do set "VERSION=%%~V"
+if not defined VERSION (echo Could not read version from version.h & exit /b 1)
 set "DIST_NAME=GameStash-%VERSION%-win64"
 set "DIST_DIR=%ROOT%dist\%DIST_NAME%"
 

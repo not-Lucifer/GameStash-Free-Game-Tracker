@@ -7,7 +7,15 @@
 ; then: "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
 #define MyAppName "Game Stash"
-#define MyAppVersion "1.0.1"
+; Version is read from the built exe's ProductVersion, which comes from
+; version.h - so the installer can never disagree with the app's update check.
+; Override with: ISCC /DMyAppVersion=x.y.z installer.iss
+#ifndef MyAppVersion
+  #define MyAppVersion GetStringFileInfo(AddBackslash(SourcePath) + "build\GameStash.exe", "ProductVersion")
+#endif
+#if MyAppVersion == ""
+  #error Could not read ProductVersion from build\GameStash.exe - build the app first
+#endif
 #define MyAppPublisher "Aman Singh"
 #define MyAppExeName "GameStash.exe"
 #define SourceDir "dist\GameStash-" + MyAppVersion + "-win64"
@@ -20,6 +28,9 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 UninstallDisplayIcon={app}\{#MyAppExeName}
+; Icon shown on setup.exe itself and in the wizard. The uninstall entry
+; above reads the icon embedded in the built exe, so both stay in sync.
+SetupIconFile=assets\gamestash.ico
 OutputDir=dist
 OutputBaseFilename=GameStash-{#MyAppVersion}-Setup
 Compression=lzma2
@@ -37,6 +48,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"
 
 [Files]
+Source: "assets\gamestash.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "oauth_config.json,debug.log,*.db,*.pdb,*.ilk"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

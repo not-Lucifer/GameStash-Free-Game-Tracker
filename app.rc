@@ -2,22 +2,19 @@
 //
 // An executable with an empty version resource shows as "Unknown publisher"
 // in the SmartScreen prompt and is a known heuristic signal for AV engines.
-// Keep the version here in sync with installer.iss (MyAppVersion).
+// The version comes from version.h, the single source of truth.
 
 #include <winver.h>
+#include "resource.h"
+#include "version.h"
 
-#define VER_MAJOR 1
-#define VER_MINOR 0
-#define VER_PATCH 1
-#define VER_BUILD 0
-#define VER_STRING "1.0.1.0"
-
-// Uncomment once an icon exists; an icon-less binary looks more suspicious.
-// 1 ICON "assets\gamestash.ico"
+// Application icon. Forward slashes so the RC preprocessor does not treat
+// the separator as an escape; resolved relative to this .rc file.
+IDI_APPICON ICON "assets/gamestash.ico"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION    VER_MAJOR,VER_MINOR,VER_PATCH,VER_BUILD
- PRODUCTVERSION VER_MAJOR,VER_MINOR,VER_PATCH,VER_BUILD
+ FILEVERSION    GS_VERSION_MAJOR,GS_VERSION_MINOR,GS_VERSION_PATCH,0
+ PRODUCTVERSION GS_VERSION_MAJOR,GS_VERSION_MINOR,GS_VERSION_PATCH,0
  FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
 #ifdef _DEBUG
  FILEFLAGS      VS_FF_DEBUG
@@ -34,12 +31,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "Aman Singh"
             VALUE "FileDescription",  "Game Stash - Free Game Tracker"
-            VALUE "FileVersion",      VER_STRING
+            VALUE "FileVersion",      GS_VERSION_STRING4
             VALUE "InternalName",     "GameStash"
             VALUE "LegalCopyright",   "Copyright (C) 2026 Aman Singh. MIT License."
             VALUE "OriginalFilename", "GameStash.exe"
             VALUE "ProductName",      "Game Stash"
-            VALUE "ProductVersion",   VER_STRING
+            VALUE "ProductVersion",   GS_VERSION_STRING
         END
     END
     BLOCK "VarFileInfo"

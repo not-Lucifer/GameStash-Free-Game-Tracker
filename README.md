@@ -4,7 +4,9 @@ A lightweight Windows desktop app to track your claimed free games across multip
 
 ## ✨ Features
 
-- 🎯 **Track Claimed Games** - Add games you've claimed from Epic, Steam, GOG, etc.
+- 🎯 **Every Store** - Free games from Steam, Epic, GOG, Ubisoft Connect, EA, Battle.net, Amazon/Prime Gaming, Itch.io, DRM-free, Xbox, PlayStation, Switch, mobile and VR
+- 📚 **Track Claimed Games** - Keep a stash of what you've claimed so you never grab it twice
+- 🔔 **Update Alerts** - Tells you when a new version is out and opens the download (Profile menu → Check for updates)
 - 👤 **User Profiles** - Customize your profile with bio and favorite platform
 - 💾 **Fully Offline** - All data lives in a local SQLite database; no account server required
 - 🔐 **Secure** - Authentication support
@@ -78,6 +80,16 @@ This project includes a few example configuration and helper files. Remove or up
 - `oauth_config.json` / `oauth_config.json.example`: OAuth settings for third-party auth providers.
 
 Adjust any local paths or service credentials before building or running the app.
+
+## 🚢 Releasing a New Version
+
+The in-app update check reads this repository's GitHub Releases, so releases must follow this shape:
+
+1. Bump the version in `version.h` (numbers **and** both strings). It is the only place the version lives; the exe, `build_dist.bat` and `installer.iss` all read it.
+2. Run `.\build_dist.bat`, then compile `installer.iss` with Inno Setup (`ISCC installer.iss`) to get `dist\GameStash-<version>-Setup.exe`.
+3. Publish a GitHub release tagged `v<version>` (for example `v1.0.2`) and attach `GameStash-<version>-Setup.exe`.
+
+Pre-releases are offered too. Draft releases are ignored. Installed copies check once per launch; builds run from the source tree's `build\` folder only check when you choose **Check for updates** (or set `GAMESTASH_UPDATE_CHECK=1`).
 
 ## 💾 Data Storage
 
